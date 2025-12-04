@@ -1,3 +1,4 @@
+
 name: "Daily Maintenance — 国内銀行振込２ (00:00–08:00 MYT)"
 
 on:
@@ -12,6 +13,7 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
+      # Secrets must be configured in the repository settings
       PAGE_ID: ${{ secrets.STATUSPAGE_PAGE_ID }}
       API_KEY: ${{ secrets.STATUSPAGE_API_KEY }}
 
