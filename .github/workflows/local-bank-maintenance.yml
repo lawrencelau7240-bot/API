@@ -1,45 +1,36 @@
-name: "Daily Maintenance — 银联转账 (23:30–08:00 MYT/GMT+8)"
+name: "Daily Maintenance — 本地银行 (23:00–08:00 GMT+8, posted a day before)"
 
 on:
   schedule:
-    # Post 5 minutes before 23:30 MYT start.
-    # 23:30 MYT = 15:30 UTC (same day), so we post at 15:25 UTC daily.
-    - cron: "25 15 * * *"
+    # Post 5 minutes before 23:00 MYT start -> 22:55 MYT == 14:55 UTC daily
+    - cron: "55 14 * * *"
   workflow_dispatch:
 
 jobs:
-  domestic-bank-maintenance:
+  local-bank-maintenance:
     runs-on: ubuntu-latest
 
     env:
-      # Secrets must be configured in the repository settings
       PAGE_ID: ${{ secrets.STATUSPAGE_PAGE_ID }}
       API_KEY: ${{ secrets.STATUSPAGE_API_KEY }}
 
-      # Title & description
-      MAINTENANCE_NAME: "银联转账"
-      MAINTENANCE_BODY: "通知：银联转账每日 23:30–08:00（MYT/GMT+8）进行例行维护。"
-
-      # Component for this maintenance
+      MAINTENANCE_NAME: "本地银行"
+      MAINTENANCE_BODY: "通知：本地银行每日 23:00–08:00（GMT+8）进行常规维护。此公告会提前一天发布。"
       COMPONENT_CODE: "jb97qs2wnwkk"
 
     steps:
-      - name: Compute scheduled_for and scheduled_until (UTC) — next 23:30→08:00 MYT
+      - name: Compute scheduled_for / scheduled_until — tomorrow 23:00→08:00 (GMT+8)
         id: times
         shell: bash
         run: |
           set -euo pipefail
-
-          # Compute START (next 23:30 MYT) in UTC ISO 8601
-          START=$(python3 -c 'from datetime import datetime, time, timedelta; from zoneinfo import ZoneInfo; myt=ZoneInfo("Asia/Kuala_Lumpur"); utc=ZoneInfo("UTC"); now=datetime.now(myt); target_t=time(23,30); today_target=datetime.combine(now.date(), target_t, tzinfo=myt); start_local=today_target if now < today_target else today_target + timedelta(days=1); print(start_local.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ"))')
-
-          # Compute END (START + 8h30m) in UTC ISO 8601
-          END=$(python3 -c 'from datetime import datetime, time, timedelta; from zoneinfo import ZoneInfo; myt=ZoneInfo("Asia/Kuala_Lumpur"); utc=ZoneInfo("UTC"); now=datetime.now(myt); target_t=time(23,30); today_target=datetime.combine(now.date(), target_t, tzinfo=myt); start_local=today_target if now < today_target else today_target + timedelta(days=1); end_local=start_local + timedelta(hours=8, minutes=30); print(end_local.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ"))')
-
+          # START: Tomorrow 23:00 MYT (always a day ahead)
+          START=$(python3 -c 'from datetime import datetime, time, timedelta; from zoneinfo import ZoneInfo; tz=ZoneInfo("Asia/Kuala_Lumpur"); utc=ZoneInfo("UTC"); now=datetime.now(tz); today_start=datetime.combine(now.date(), time(23,0), tzinfo=tz); start_local=today_start + timedelta(days=1); print(start_local.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ"))')
+          # END: Tomorrow + 9 hours => 08:00 next day
+          END=$(python3 -c 'from datetime import datetime, time, timedelta; from zoneinfo import ZoneInfo; tz=ZoneInfo("Asia/Kuala_Lumpur"); utc=ZoneInfo("UTC"); now=datetime.now(tz); today_start=datetime.combine(now.date(), time(23,0), tzinfo=tz); start_local=today_start + timedelta(days=1); end_local=start_local + timedelta(hours=9); print(end_local.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ"))')
           echo "start=$START" >> "$GITHUB_OUTPUT"
           echo "end=$END"     >> "$GITHUB_OUTPUT"
-
-          echo "银联转账 UTC window: $START → $END"
+          echo "本地银行 UTC window (tomorrow): $START → $END"
 
       - name: Pre-check (start/end are in the future and valid)
         shell: bash
@@ -48,26 +39,12 @@ jobs:
           END:   ${{ steps.times.outputs.end }}
         run: |
           set -euo pipefail
-          echo "START: $START"
-          echo "END:   $END"
-
+          echo "START: $START"; echo "END: $END"
           NOW_UTC=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-
           to_epoch() { date -u -d "$1" +"%s"; }
-          START_EPOCH=$(to_epoch "$START")
-          END_EPOCH=$(to_epoch "$END")
-          NOW_EPOCH=$(to_epoch "$NOW_UTC")
-
-          if [ "$END_EPOCH" -le "$START_EPOCH" ]; then
-            echo "::error ::END must be later than START."
-            exit 1
-          fi
-
-          if [ "$START_EPOCH" -le "$NOW_EPOCH" ]; then
-            echo "::error ::START must be in the future. START=$START NOW=$NOW_UTC"
-            exit 1
-          fi
-
+          START_EPOCH=$(to_epoch "$START"); END_EPOCH=$(to_epoch "$END"); NOW_EPOCH=$(to_epoch "$NOW_UTC")
+          [ "$END_EPOCH" -le "$START_EPOCH" ] && { echo "::error ::END must be later than START."; exit 1; }
+          [ "$START_EPOCH" -le "$NOW_EPOCH" ] && { echo "::error ::START must be in the future."; exit 1; }
           echo "Pre-check OK."
 
       - name: Create scheduled maintenance via Statuspage API
@@ -77,14 +54,13 @@ jobs:
           END:   ${{ steps.times.outputs.end }}
         run: |
           set -euo pipefail
-          echo "Scheduling 银联转账 ${START} -> ${END} (UTC) with component ${COMPONENT_CODE}"
-
+          echo "Scheduling 本地银行 ${START} -> ${END} (UTC) with component ${COMPONENT_CODE}"
           HTTP_CODE=$(curl -sS -o response.json -w "%{http_code}" \
             "https://api.statuspage.io/v1/pages/${PAGE_ID}/incidents" \
             -H "Authorization: OAuth ${API_KEY}" \
             -H "Content-Type: application/x-www-form-urlencoded" \
             --data-urlencode "incident[name]=${MAINTENANCE_NAME}" \
-            --data-urlencode "incident[status]=scheduled" \
+            --data-urlencode "incident[status]=scheduled}" \
             --data-urlencode "incident[body]=${MAINTENANCE_BODY}" \
             --data-urlencode "incident[scheduled_for]=${START}" \
             --data-urlencode "incident[scheduled_until]=${END}" \
@@ -93,14 +69,8 @@ jobs:
             --data-urlencode "incident[incident_updates][0][status]=scheduled" \
             --data-urlencode "incident[incident_updates][0][affected_components][0][code]=${COMPONENT_CODE}" \
             --data-urlencode "incident[incident_updates][0][affected_components][0][new_status]=under_maintenance" )
-
-          echo "HTTP status: $HTTP_CODE"
-          cat response.json || true
-
-          if [ "$HTTP_CODE" -ge 300 ]; then
-            echo "::error ::Failed to create 银联转账 maintenance. See response above."
-            exit 1
-          fi
+          echo "HTTP status: $HTTP_CODE"; cat response.json || true
+          [ "$HTTP_CODE" -ge 300 ] && { echo "::error ::Failed to create 本地银行 maintenance."; exit 1; }
 
       - name: Summary
         shell: bash
@@ -108,6 +78,6 @@ jobs:
           START: ${{ steps.times.outputs.start }}
           END:   ${{ steps.times.outputs.end }}
         run: |
-          echo "✅ 银联转账 scheduled (23:30–08:00 MYT/GMT+8)."
+          echo "✅ 本地银行 scheduled (23:00–08:00 GMT+8, posted a day before)."
           echo "Window (UTC): ${START} -> ${END}"
           echo "Component: ${COMPONENT_CODE}"
