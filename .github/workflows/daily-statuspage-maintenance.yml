@@ -2,7 +2,8 @@ name: Daily Statuspage Maintenance (MYT 23:55 → 08:50)
 
 on:
   schedule:
-    - cron: "50 15 * * *"  # 23:50 MYT
+    # Runs daily at 15:50 UTC (23:50 MYT) — 5 minutes before start
+    - cron: "50 15 * * *"
   workflow_dispatch:
 
 jobs:
@@ -12,25 +13,49 @@ jobs:
       PAGE_ID: ${{ secrets.STATUSPAGE_PAGE_ID }}
       API_KEY: ${{ secrets.STATUSPAGE_API_KEY }}
 
+      # Custom title & description
       MAINTENANCE_NAME: "MTPay is going for Schedule Maintenance"
       MAINTENANCE_BODY: "Hi Team,\n\nPlease note that MTPay will go on scheduled maintenance."
 
+      # Component to mark under maintenance
       COMPONENT_CODE: "jb97qs2wnwkk"
 
     steps:
-      - name: Compute scheduled_for/scheduled_until (UTC) using MYT base dates
+      - name: Compute scheduled_for/scheduled_until (UTC) using Python (MYT base)
         id: times
         shell: bash
         run: |
           set -euo pipefail
-          TODAY_MYT=$(TZ=Asia/Kuala_Lumpur date +%Y-%m-%d)
-          TOMORROW_MYT=$(TZ=Asia/Kuala_Lumpur date -d "${TODAY_MYT} + 1 day" +%Y-%m-%d)
-          START_LOCAL="${TODAY_MYT} 23:55:00"
-          END_LOCAL="${TOMORROW_MYT} 08:50:00"
-          START_UTC=$(date -u -d "$START_LOCAL TZ=\"Asia/Kuala_Lumpur\"" +"%Y-%m-%dT%H:%M:%SZ")
-          END_UTC=$(date -u -d "$END_LOCAL TZ=\"Asia/Kuala_Lumpur\""   +"%Y-%m-%dT%H:%M:%SZ")
-          echo "start=${START_UTC}" >> "$GITHUB_OUTPUT"
-          echo "end=${END_UTC}"     >> "$GITHUB_OUTPUT"
+
+          # Use Python's zoneinfo to compute local MYT times, then convert to UTC ISO8601
+          python3 - <<'PY' > times.env
+from datetime import datetime, date, time, timedelta
+from zoneinfo import ZoneInfo
+
+myt = ZoneInfo("Asia/Kuala_Lumpur")
+utc = ZoneInfo("UTC")
+
+# Date in MYT when this job runs
+today_myt = datetime.now(myt).date()
+
+# Start: today 23:55 MYT
+start_local = datetime.combine(today_myt, time(23, 55, 0, tzinfo=myt))
+# End: tomorrow 08:50 MYT
+end_local = datetime.combine(today_myt + timedelta(days=1), time(8, 50, 0, tzinfo=myt))
+
+start_utc = start_local.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+end_utc   = end_local.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+print("start=" + start_utc)
+print("end="   + end_utc)
+PY
+
+          # Export the computed values to the job's outputs
+          cat times.env >> "$GITHUB_OUTPUT"
+
+          echo "Planned window (UTC):"
+          echo "  scheduled_for   = $(grep '^start=' times.env | cut -d= -f2-)"
+          echo "  scheduled_until = $(grep '^end='   times.env | cut -d= -f2-)"
 
       - name: Create scheduled maintenance via Statuspage API (with affected component)
         shell: bash
@@ -39,8 +64,10 @@ jobs:
           END:   ${{ steps.times.outputs.end }}
         run: |
           set -euo pipefail
+
           echo "Scheduling maintenance from ${START} to ${END} (UTC) for component ${COMPONENT_CODE}..."
 
+          # Use --data-urlencode for safe form encoding
           HTTP_CODE=$(curl -sS -o response.json -w "%{http_code}" \
             "https://api.statuspage.io/v1/pages/${PAGE_ID}/incidents" \
             -H "Authorization: OAuth ${API_KEY}" \
@@ -61,6 +88,13 @@ jobs:
           cat response.json || true
 
           if [ "$HTTP_CODE" -ge 300 ]; then
-            echo "Failed to create maintenance. See response above."
+            echo "::error ::Failed to create maintenance. See response above."
             exit 1
           fi
+
+      - name: Summary
+        shell: bash
+        run: |
+          echo "✅ Daily scheduled maintenance created with component ${COMPONENT_CODE}."
+          echo "Title: ${MAINTENANCE_NAME}"
+          echo "Window (UTC): ${START} → ${END}"
