@@ -1,57 +1,96 @@
-name: "Statuspage — 本地银行 (POST NOW until 08:00 GMT+8)"
+name: "Daily Maintenance — 银联转账 (23:30–08:00 MYT/GMT+8)"
 
 on:
+  schedule:
+    # Post 5 minutes before 23:30 MYT start.
+    # 23:30 MYT = 15:30 UTC (same day), so we post at 15:25 UTC daily.
+    - cron: "25 15 * * *"
   workflow_dispatch:
 
 jobs:
-  post-now-local-bank:
+  domestic-bank-maintenance:
     runs-on: ubuntu-latest
 
     env:
+      # Secrets must be configured in the repository settings
       PAGE_ID: ${{ secrets.STATUSPAGE_PAGE_ID }}
       API_KEY: ${{ secrets.STATUSPAGE_API_KEY }}
 
-      MAINTENANCE_NAME: "本地银行"
-      MAINTENANCE_BODY: "【即时维护开始】本地银行正在进行维护（立即开始至本地时间08:00）。"
+      # Title & description
+      MAINTENANCE_NAME: "银联转账"
+      MAINTENANCE_BODY: "通知：银联转账每日 23:30–08:00（MYT/GMT+8）进行例行维护。"
+
+      # Component for this maintenance
       COMPONENT_CODE: "jb97qs2wnwkk"
 
     steps:
-      - name: Compute START (now UTC) and END (next 08:00 local → UTC)
+      - name: Compute scheduled_for and scheduled_until (UTC) — next 23:30→08:00 MYT
         id: times
         shell: bash
         run: |
           set -euo pipefail
 
-          # START: Now in UTC
-          START="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          # Compute START (next 23:30 MYT) in UTC ISO 8601
+          START=$(python3 -c 'from datetime import datetime, time, timedelta; from zoneinfo import ZoneInfo; myt=ZoneInfo("Asia/Kuala_Lumpur"); utc=ZoneInfo("UTC"); now=datetime.now(myt); target_t=time(23,30); today_target=datetime.combine(now.date(), target_t, tzinfo=myt); start_local=today_target if now < today_target else today_target + timedelta(days=1); print(start_local.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ"))')
 
-          # END: Next Asia/Kuala_Lumpur 08:00 converted to UTC
-          END=$(python3 -c 'from datetime import datetime, time, timedelta; from zoneinfo import ZoneInfo; tz=ZoneInfo("Asia/Kuala_Lumpur"); utc=ZoneInfo("UTC"); now=datetime.now(tz); target_date = now.date() if now.time() < time(8,0) else (now + timedelta(days=1)).date(); end_local = datetime.combine(target_date, time(8,0), tzinfo=tz); print(end_local.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ"))')
+          # Compute END (START + 8h30m) in UTC ISO 8601
+          END=$(python3 -c 'from datetime import datetime, time, timedelta; from zoneinfo import ZoneInfo; myt=ZoneInfo("Asia/Kuala_Lumpur"); utc=ZoneInfo("UTC"); now=datetime.now(myt); target_t=time(23,30); today_target=datetime.combine(now.date(), target_t, tzinfo=myt); start_local=today_target if now < today_target else today_target + timedelta(days=1); end_local=start_local + timedelta(hours=8, minutes=30); print(end_local.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ"))')
 
           echo "start=$START" >> "$GITHUB_OUTPUT"
           echo "end=$END"     >> "$GITHUB_OUTPUT"
 
-          echo "本地银行 (POST NOW) — UTC window: $START → $END"
+          echo "银联转账 UTC window: $START → $END"
 
-      - name: Create IN-PROGRESS incident NOW via Statuspage API
+      - name: Pre-check (start/end are in the future and valid)
         shell: bash
         env:
           START: ${{ steps.times.outputs.start }}
           END:   ${{ steps.times.outputs.end }}
         run: |
           set -euo pipefail
-          echo "Posting NOW: 本地银行 ${START} -> ${END} (UTC) with component ${COMPONENT_CODE}"
+          echo "START: $START"
+          echo "END:   $END"
+
+          NOW_UTC=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          to_epoch() { date -u -d "$1" +"%s"; }
+          START_EPOCH=$(to_epoch "$START")
+          END_EPOCH=$(to_epoch "$END")
+          NOW_EPOCH=$(to_epoch "$NOW_UTC")
+
+          if [ "$END_EPOCH" -le "$START_EPOCH" ]; then
+            echo "::error ::END must be later than START."
+            exit 1
+          fi
+
+          if [ "$START_EPOCH" -le "$NOW_EPOCH" ]; then
+            echo "::error ::START must be in the future. START=$START NOW=$NOW_UTC"
+            exit 1
+          fi
+
+          echo "Pre-check OK."
+
+      - name: Create scheduled maintenance via Statuspage API
+        shell: bash
+        env:
+          START: ${{ steps.times.outputs.start }}
+          END:   ${{ steps.times.outputs.end }}
+        run: |
+          set -euo pipefail
+          echo "Scheduling 银联转账 ${START} -> ${END} (UTC) with component ${COMPONENT_CODE}"
 
           HTTP_CODE=$(curl -sS -o response.json -w "%{http_code}" \
             "https://api.statuspage.io/v1/pages/${PAGE_ID}/incidents" \
             -H "Authorization: OAuth ${API_KEY}" \
             -H "Content-Type: application/x-www-form-urlencoded" \
             --data-urlencode "incident[name]=${MAINTENANCE_NAME}" \
-            --data-urlencode "incident[status]=in_progress" \
+            --data-urlencode "incident[status]=scheduled" \
             --data-urlencode "incident[body]=${MAINTENANCE_BODY}" \
             --data-urlencode "incident[scheduled_for]=${START}" \
             --data-urlencode "incident[scheduled_until]=${END}" \
-            --data-urlencode "incident[incident_updates][0][status]=in_progress" \
+            --data-urlencode "incident[scheduled_auto_in_progress]=true" \
+            --data-urlencode "incident[scheduled_auto_completed]=true" \
+            --data-urlencode "incident[incident_updates][0][status]=scheduled" \
             --data-urlencode "incident[incident_updates][0][affected_components][0][code]=${COMPONENT_CODE}" \
             --data-urlencode "incident[incident_updates][0][affected_components][0][new_status]=under_maintenance" )
 
@@ -59,7 +98,7 @@ jobs:
           cat response.json || true
 
           if [ "$HTTP_CODE" -ge 300 ]; then
-            echo "::error ::Failed to start 本地银行 maintenance NOW. See response above."
+            echo "::error ::Failed to create 银联转账 maintenance. See response above."
             exit 1
           fi
 
@@ -69,6 +108,6 @@ jobs:
           START: ${{ steps.times.outputs.start }}
           END:   ${{ steps.times.outputs.end }}
         run: |
-          echo "✅ 本地银行 maintenance incident posted NOW."
+          echo "✅ 银联转账 scheduled (23:30–08:00 MYT/GMT+8)."
           echo "Window (UTC): ${START} -> ${END}"
           echo "Component: ${COMPONENT_CODE}"
