@@ -1,9 +1,8 @@
-
 name: Daily Statuspage Maintenance (MYT 23:55 → 08:50)
 
 on:
   schedule:
-    # Run 5 minutes before the window starts: 15:50 UTC (23:50 MYT)
+    # Runs daily at 15:50 UTC (23:50 MYT) — 5 minutes before start
     - cron: "50 15 * * *"
   workflow_dispatch:
 
@@ -20,9 +19,9 @@ jobs:
 
       # Maintenance window in MYT (UTC+8)
       START_MYT_HOUR: "23"
-      START_MYT_MIN:  "55"
-      END_MYT_HOUR:   "8"
-      END_MYT_MIN:    "50"
+      START_MYT_MIN: "55"
+      END_MYT_HOUR: "8"
+      END_MYT_MIN: "50"
       TZ_OFFSET_HOURS: "8"
 
       # Component to mark under maintenance
@@ -46,49 +45,49 @@ jobs:
           END_MYT_NEXTDAY="${NEXTDAY_UTC} ${END_MYT_HOUR}:${END_MYT_MIN}:00"
           END_UTC=$(date -u -d "${END_MYT_NEXTDAY} - ${TZ_OFFSET_HOURS} hours" +"%Y-%m-%dT%H:%M:%SZ")
 
-          echo "start=${START_UTC}" >> $GITHUB_OUTPUT
-          echo "end=${END_UTC}" >> $GITHUB_OUTPUT
+          echo "start=${START_UTC}" >> "$GITHUB_OUTPUT"
+          echo "end=${END_UTC}"   >> "$GITHUB_OUTPUT"
 
           echo "Planned window (UTC):"
           echo "  scheduled_for   = ${START_UTC}"
           echo "  scheduled_until = ${END_UTC}"
 
       - name: Create scheduled maintenance via Statuspage API (with affected component)
+        shell: bash
         env:
           START: ${{ steps.times.outputs.start }}
           END:   ${{ steps.times.outputs.end }}
         run: |
           set -euo pipefail
 
-          # x-www-form-urlencoded payload
-          # We include an initial incident update with the component marked as "under_maintenance"
-          # so when the window flips to "In Progress", the component reflects the status.
-          PAYLOAD=$(cat <<EOF
-incident[name]=${MAINTENANCE_NAME}&
-incident[status]=scheduled&
-incident[body]=${MAINTENANCE_BODY}&
-incident[scheduled_for]=${START}&
-incident[scheduled_until]=${END}&
-incident[scheduled_auto_in_progress]=true&
-incident[scheduled_auto_completed]=true&
-incident[incident_updates][0][status]=scheduled&
-incident[incident_updates][0][affected_components][0][code]=${COMPONENT_CODE}&
-incident[incident_updates][0][affected_components][0][new_status]=under_maintenance
-EOF
-          )
-          PAYLOAD=$(echo "$PAYLOAD" | tr -d '\n')
-
           echo "Scheduling maintenance from ${START} to ${END} (UTC) for component ${COMPONENT_CODE}..."
+
+          # Build request using --data-urlencode to avoid YAML/heredoc pitfalls
           HTTP_CODE=$(curl -sS -o response.json -w "%{http_code}" \
             "https://api.statuspage.io/v1/pages/${PAGE_ID}/incidents" \
             -H "Authorization: OAuth ${API_KEY}" \
             -H "Content-Type: application/x-www-form-urlencoded" \
-            --data "$PAYLOAD")
+            --data-urlencode "incident[name]=${MAINTENANCE_NAME}" \
+            --data-urlencode "incident[status]=scheduled" \
+            --data-urlencode "incident[body]=${MAINTENANCE_BODY}" \
+            --data-urlencode "incident[scheduled_for]=${START}" \
+            --data-urlencode "incident[scheduled_until]=${END}" \
+            --data-urlencode "incident[scheduled_auto_in_progress]=true" \
+            --data-urlencode "incident[scheduled_auto_completed]=true" \
+            --data-urlencode "incident[incident_updates][0][status]=scheduled" \
+            --data-urlencode "incident[incident_updates][0][affected_components][0][code]=${COMPONENT_CODE}" \
+            --data-urlencode "incident[incident_updates][0][affected_components][0][new_status]=under_maintenance" \
+          )
 
           echo "HTTP status: $HTTP_CODE"
           cat response.json || true
-          test "$HTTP_CODE" -lt 300
+
+          if [ "$HTTP_CODE" -ge 300 ]; then
+            echo "Failed to create maintenance. See response above."
+            exit 1
+          fi
 
       - name: Summary
+        shell: bash
         run: |
           echo "Daily scheduled maintenance created with affected component."
