@@ -1,13 +1,14 @@
-name: "Daily Maintenance — 银联转账 (23:30–08:00 GMT+8, posted a day before)"
+name: "Daily Maintenance — 银联转账 (23:30–08:00 MYT/GMT+8)"
 
 on:
   schedule:
-    # Post 5 minutes before 23:30 MYT start -> 23:25 MYT == 15:25 UTC daily
+    # Post 5 minutes before 23:30 MYT start.
+    # 23:30 MYT = 15:30 UTC (same day), so we post at 15:25 UTC daily.
     - cron: "25 15 * * *"
   workflow_dispatch:
 
 jobs:
-  unionpay-transfer-maintenance:
+  unionpay-maintenance:
     runs-on: ubuntu-latest
 
     env:
@@ -15,22 +16,46 @@ jobs:
       API_KEY: ${{ secrets.STATUSPAGE_API_KEY }}
 
       MAINTENANCE_NAME: "银联转账"
-      MAINTENANCE_BODY: "通知：银联转账每日 23:30–08:00（GMT+8）进行常规维护。此公告会提前一天发布。"
+      # Shown in the incident card; we'll also include a brief first update below.
+      MAINTENANCE_BODY: "提醒：银联转账将于每日 23:30–08:00（MYT/GMT+8）进行例行维护，届时服务可能受限。"
       COMPONENT_CODE: "jb97qs2wnwkk"
 
     steps:
-      - name: Compute scheduled_for / scheduled_until — tomorrow 23:30→08:00 (GMT+8)
+      - name: Show context (debug)
+        shell: bash
+        run: |
+          echo "Event: ${{ github.event_name }}"
+          echo "Run time (UTC): $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          echo "Run time (MYT): $(TZ=Asia/Kuala_Lumpur date +"%Y-%m-%dT%H:%M:%S%z")"
+
+      - name: Compute scheduled_for and scheduled_until (UTC) — next 23:30→08:00 MYT
         id: times
         shell: bash
         run: |
           set -euo pipefail
-          # START: Tomorrow 23:30 MYT (always a day ahead)
-          START=$(python3 -c 'from datetime import datetime, time, timedelta; from zoneinfo import ZoneInfo; tz=ZoneInfo("Asia/Kuala_Lumpur"); utc=ZoneInfo("UTC"); now=datetime.now(tz); today_start=datetime.combine(now.date(), time(23,30), tzinfo=tz); start_local=today_start + timedelta(days=1); print(start_local.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ"))')
-          # END: Tomorrow + 8.5 hours => 08:00 next day
-          END=$(python3 -c 'from datetime import datetime, time, timedelta; from zoneinfo import ZoneInfo; tz=ZoneInfo("Asia/Kuala_Lumpur"); utc=ZoneInfo("UTC"); now=datetime.now(tz); today_start=datetime.combine(now.date(), time(23,30), tzinfo=tz); start_local=today_start + timedelta(days=1); end_local=start_local + timedelta(hours=8, minutes=30); print(end_local.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ"))')
+
+          # START (next 23:30 MYT) → UTC
+          START=$(python3 -c 'from datetime import datetime, time, timedelta; from zoneinfo import ZoneInfo
+now=datetime.now(ZoneInfo("Asia/Kuala_Lumpur"))
+myt=ZoneInfo("Asia/Kuala_Lumpur"); utc=ZoneInfo("UTC")
+target_t=time(23,30)
+today_target=datetime.combine(now.date(), target_t, tzinfo=myt)
+start_local=today_target if now < today_target else today_target + timedelta(days=1)
+print(start_local.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ"))')
+
+          # END = START + 8h30m → UTC
+          END=$(python3 -c 'from datetime import datetime, time, timedelta; from zoneinfo import ZoneInfo
+now=datetime.now(ZoneInfo("Asia/Kuala_Lumpur"))
+myt=ZoneInfo("Asia/Kuala_Lumpur"); utc=ZoneInfo("UTC")
+target_t=time(23,30)
+today_target=datetime.combine(now.date(), target_t, tzinfo=myt)
+start_local=today_target if now < today_target else today_target + timedelta(days=1)
+end_local=start_local + timedelta(hours=8, minutes=30)
+print(end_local.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ"))')
+
           echo "start=$START" >> "$GITHUB_OUTPUT"
           echo "end=$END"     >> "$GITHUB_OUTPUT"
-          echo "银联转账 UTC window (tomorrow): $START → $END"
+          echo "银联转账 UTC window: $START → $END"
 
       - name: Pre-check (start/end are in the future and valid)
         shell: bash
@@ -39,22 +64,38 @@ jobs:
           END:   ${{ steps.times.outputs.end }}
         run: |
           set -euo pipefail
-          echo "START: $START"; echo "END: $END"
+          echo "START: $START"
+          echo "END:   $END"
+
           NOW_UTC=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
           to_epoch() { date -u -d "$1" +"%s"; }
-          START_EPOCH=$(to_epoch "$START"); END_EPOCH=$(to_epoch "$END"); NOW_EPOCH=$(to_epoch "$NOW_UTC")
-          [ "$END_EPOCH" -le "$START_EPOCH" ] && { echo "::error ::END must be later than START."; exit 1; }
-          [ "$START_EPOCH" -le "$NOW_EPOCH" ] && { echo "::error ::START must be in the future."; exit 1; }
+          START_EPOCH=$(to_epoch "$START")
+          END_EPOCH=$(to_epoch "$END")
+          NOW_EPOCH=$(to_epoch "$NOW_UTC")
+
+          if [ "$END_EPOCH" -le "$START_EPOCH" ]; then
+            echo "::error ::END must be later than START."
+            exit 1
+          fi
+          if [ "$START_EPOCH" -le "$NOW_EPOCH" ]; then
+            echo "::error ::START must be in the future. START=$START NOW=$NOW_UTC"
+            exit 1
+          fi
           echo "Pre-check OK."
 
-      - name: Create scheduled maintenance via Statuspage API
+      - name: Create scheduled maintenance via Statuspage API (announce now)
         shell: bash
         env:
           START: ${{ steps.times.outputs.start }}
           END:   ${{ steps.times.outputs.end }}
         run: |
           set -euo pipefail
-          echo "Scheduling 银联转账 ${START} -> ${END} (UTC) with component ${COMPONENT_CODE}"
+          echo "Scheduling 银联转账 ${START} -> ${END} (UTC) — posting now"
+
+          # Build a short "first update" body that appears immediately
+          FIRST_UPDATE="提前通知：银联转账将于 ${START}（UTC）至 ${END}（UTC）进行例行维护（当地时间 23:30–08:00 MYT/GMT+8）。"
+
           HTTP_CODE=$(curl -sS -o response.json -w "%{http_code}" \
             "https://api.statuspage.io/v1/pages/${PAGE_ID}/incidents" \
             -H "Authorization: OAuth ${API_KEY}" \
@@ -64,13 +105,24 @@ jobs:
             --data-urlencode "incident[body]=${MAINTENANCE_BODY}" \
             --data-urlencode "incident[scheduled_for]=${START}" \
             --data-urlencode "incident[scheduled_until]=${END}" \
+            --data-urlencode "incident[deliver_notifications]=true" \
             --data-urlencode "incident[scheduled_auto_in_progress]=true" \
             --data-urlencode "incident[scheduled_auto_completed]=true" \
+            --data-urlencode "incident[auto_transition_to_maintenance_state]=true" \
+            --data-urlencode "incident[auto_transition_to_operational_state]=true" \
+            --data-urlencode "incident[component_ids][]=${COMPONENT_CODE}" \
             --data-urlencode "incident[incident_updates][0][status]=scheduled" \
-            --data-urlencode "incident[incident_updates][0][affected_components][0][code]=${COMPONENT_CODE}" \
-            --data-urlencode "incident[incident_updates][0][affected_components][0][new_status]=under_maintenance" )
-          echo "HTTP status: $HTTP_CODE"; cat response.json || true
-          [ "$HTTP_CODE" -ge 300 ] && { echo "::error ::Failed to create 银联转账 maintenance."; exit 1; }
+            --data-urlencode "incident[incident_updates][0][body]=${FIRST_UPDATE}" )
+
+          echo "HTTP status: $HTTP_CODE"
+          echo "----- API response -----"
+          cat response.json || true
+          echo "------------------------"
+
+          if [ "$HTTP_CODE" -ge 300 ]; then
+            echo "::error ::Failed to create 银联转账 maintenance. See response above."
+            exit 1
+          fi
 
       - name: Summary
         shell: bash
@@ -78,6 +130,7 @@ jobs:
           START: ${{ steps.times.outputs.start }}
           END:   ${{ steps.times.outputs.end }}
         run: |
-          echo "✅ 银联转账 scheduled (23:30–08:00 GMT+8, posted a day before)."
+          echo "✅ 银联转账 scheduled (23:30–08:00 MYT/GMT+8)."
           echo "Window (UTC): ${START} -> ${END}"
           echo "Component: ${COMPONENT_CODE}"
+          echo "Posted now with an initial 'scheduled' update and notifications."
