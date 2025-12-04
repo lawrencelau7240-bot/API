@@ -1,0 +1,147 @@
+name: "Daily Maintenance — 支付寶 (TWD) 电子钱包 (00:01–09:59 GMT+8)"
+
+on:
+  schedule:
+    # Post 5 minutes before 00:01 GMT+8 start.
+    # 00:01 GMT+8 = 16:01 UTC (previous day), so 5 minutes before is 15:56 UTC daily.
+    - cron: "56 15 * * *"
+  workflow_dispatch:
+
+jobs:
+  alipay-twd-ewallet-maintenance:
+    runs-on: ubuntu-latest
+
+    env:
+      # Secrets to configure in the repository
+      PAGE_ID: ${{ secrets.STATUSPAGE_PAGE_ID }}
+      API_KEY: ${{ secrets.STATUSPAGE_API_KEY }}
+
+      # Optional: put your component id in a secret. If empty, we won't include it.
+      COMPONENT_CODE: ${{ secrets.ALIPAY_TWD_EWALLET_COMPONENT_ID }}
+
+      # Titles & copy
+      MAINTENANCE_NAME: "支付寶 (TWD) — 电子钱包"
+      MAINTENANCE_BODY: "通知：支付寶 (TWD) 电子钱包每日 00:01–09:59（GMT+8）进行例行维护。"
+
+    steps:
+      - name: Show context (debug)
+        shell: bash
+        run: |
+          echo "Event: ${{ github.event_name }}"
+          echo "Run time (UTC): $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          echo "Run time (GMT+8/MYT): $(TZ=Asia/Kuala_Lumpur date +"%Y-%m-%dT%H:%M:%S%z")"
+
+      - name: Compute scheduled_for / scheduled_until — next 00:01→09:59 (GMT+8, pure bash)
+        id: times
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Determine the next local 00:01 (GMT+8)
+          TODAY_LOCAL=$(TZ=Asia/Kuala_Lumpur date +%Y-%m-%d)
+          TARGET_LOCAL="${TODAY_LOCAL} 00:01:00"
+          NOW_EPOCH=$(TZ=Asia/Kuala_Lumpur date +%s)
+          TARGET_EPOCH=$(TZ=Asia/Kuala_Lumpur date -d "$TARGET_LOCAL" +%s)
+
+          if [ "$NOW_EPOCH" -lt "$TARGET_EPOCH" ]; then
+            START_EPOCH="$TARGET_EPOCH"                 # today 00:01 (not yet reached)
+          else
+            START_EPOCH=$(( TARGET_EPOCH + 24*3600 ))   # tomorrow 00:01
+          fi
+
+          # END = START + 9h58m = 09:59 local time
+          END_EPOCH=$(( START_EPOCH + 9*3600 + 58*60 ))
+
+          # Format as UTC ISO8601 for Statuspage API
+          START_UTC=$(date -u -d "@$START_EPOCH" +"%Y-%m-%dT%H:%M:%SZ")
+          END_UTC=$(date -u -d "@$END_EPOCH"   +"%Y-%m-%dT%H:%M:%SZ")
+
+          echo "start=$START_UTC" >> "$GITHUB_OUTPUT"
+          echo "end=$END_UTC"     >> "$GITHUB_OUTPUT"
+          echo "支付寶 (TWD) 电子钱包 UTC window: $START_UTC -> $END_UTC"
+
+      - name: Pre-check (start/end are in the future and valid)
+        shell: bash
+        env:
+          START: ${{ steps.times.outputs.start }}
+          END:   ${{ steps.times.outputs.end }}
+        run: |
+          set -euo pipefail
+          echo "START: $START"
+          echo "END:   $END"
+
+          NOW_UTC=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          to_epoch() { date -u -d "$1" +"%s"; }
+
+          START_EPOCH=$(to_epoch "$START")
+          END_EPOCH=$(to_epoch "$END")
+          NOW_EPOCH=$(to_epoch "$NOW_UTC")
+
+          if [ "$END_EPOCH" -le "$START_EPOCH" ]; then
+            echo "::error ::END must be later than START."
+            exit 1
+          fi
+
+          if [ "$START_EPOCH" -le "$NOW_EPOCH" ]; then
+            echo "::error ::START must be in the future. START=$START NOW=$NOW_UTC"
+            exit 1
+          fi
+
+          echo "Pre-check OK."
+
+      - name: Create scheduled maintenance via Statuspage API (announce now; component optional)
+        shell: bash
+        env:
+          START: ${{ steps.times.outputs.start }}
+          END:   ${{ steps.times.outputs.end }}
+        run: |
+          set -euo pipefail
+
+          echo "Scheduling 支付寶 (TWD) 电子钱包 ${START} -> ${END} (UTC)"
+          FIRST_UPDATE="提前通知：支付寶 (TWD) 电子钱包将在 ${START}（UTC）至 ${END}（UTC）进行例行维护（本地时间 00:01–09:59，GMT+8）。"
+
+          # Build data args; include component_ids only if COMPONENT_CODE is set
+          DATA_ARGS=(
+            --data-urlencode "incident[name]=${MAINTENANCE_NAME}"
+            --data-urlencode "incident[status]=scheduled"
+            --data-urlencode "incident[body]=${MAINTENANCE_BODY}"
+            --data-urlencode "incident[scheduled_for]=${START}"
+            --data-urlencode "incident[scheduled_until]=${END}"
+            --data-urlencode "incident[deliver_notifications]=true"
+            --data-urlencode "incident[scheduled_auto_in_progress]=true"
+            --data-urlencode "incident[scheduled_auto_completed]=true"
+            --data-urlencode "incident[incident_updates][0][status]=scheduled"
+            --data-urlencode "incident[incident_updates][0][body]=${FIRST_UPDATE}"
+          )
+
+          if [ -n "${COMPONENT_CODE:-}" ]; then
+            DATA_ARGS+=( --data-urlencode "incident[component_ids][]=${COMPONENT_CODE}" )
+          fi
+
+          HTTP_CODE=$(curl -sS -o response.json -w "%{http_code}" \
+            "https://api.statuspage.io/v1/pages/${PAGE_ID}/incidents" \
+            -H "Authorization: OAuth ${API_KEY}" \
+            -H "Content-Type: application/x-www-form-urlencoded" \
+            "${DATA_ARGS[@]}")
+
+          echo "HTTP status: $HTTP_CODE"
+          echo "----- API response -----"
+          cat response.json || true
+          echo "------------------------"
+
+          if [ "$HTTP_CODE" -ge 300 ]; then
+            echo "::error ::Failed to create 支付寶 (TWD) 电子钱包 maintenance. See response above."
+            exit 1
+          fi
+
+          echo "::notice ::Scheduled maintenance created successfully."
+
+      - name: Summary
+        shell: bash
+        env:
+          START: ${{ steps.times.outputs.start }}
+          END:   ${{ steps.times.outputs.end }}
+        run: |
+          echo "✅ 支付寶 (TWD) 电子钱包 scheduled (00:01–09:59 GMT+8, posted 5 minutes before)."
+          echo "Window (UTC): ${START} -> ${END}"
+          echo "Component: ${COMPONENT_CODE:-<none>}"
