@@ -1,0 +1,46 @@
+
+name: Daily Statuspage Maintenance (MYT 23:55 → 08:50)
+
+on:
+  schedule:
+    - cron: "50 15 * * *"  # Runs daily at 15:50 UTC (23:50 MYT)
+  workflow_dispatch:
+
+jobs:
+  create-scheduled-maintenance:
+    runs-on: ubuntu-latest
+    env:
+      PAGE_ID: ${{ secrets.STATUSPAGE_PAGE_ID }}
+      API_KEY: ${{ secrets.STATUSPAGE_API_KEY }}
+      MAINTENANCE_NAME: "MTPay is going for Schedule Maintenance"
+      MAINTENANCE_BODY: "Hi Team,\n\nPlease note that MTPay will go on scheduled maintenance."
+      START_MYT_HOUR: "23"
+      START_MYT_MIN:  "55"
+      END_MYT_HOUR:   "8"
+      END_MYT_MIN:    "50"
+      TZ_OFFSET_HOURS: "8"
+
+    steps:
+      - name: Compute scheduled_for/scheduled_until (UTC)
+        id: times
+        run: |
+          TODAY_UTC=$(date -u +%Y-%m-%d)
+          START_MYT_TODAY="${TODAY_UTC} ${START_MYT_HOUR}:${START_MYT_MIN}:00"
+          START_UTC=$(date -u -d "${START_MYT_TODAY} - ${TZ_OFFSET_HOURS} hours" +"%Y-%m-%dT%H:%M:%SZ")
+          NEXTDAY_UTC=$(date -u -d "${TODAY_UTC} + 1 day" +%Y-%m-%d)
+          END_MYT_NEXTDAY="${NEXTDAY_UTC} ${END_MYT_HOUR}:${END_MYT_MIN}:00"
+          END_UTC=$(date -u -d "${END_MYT_NEXTDAY} - ${TZ_OFFSET_HOURS} hours" +"%Y-%m-%dT%H:%M:%SZ")
+          echo "start=${START_UTC}" >> $GITHUB_OUTPUT
+          echo "end=${END_UTC}" >> $GITHUB_OUTPUT
+
+      - name: Create scheduled maintenance via Statuspage API
+        env:
+          START: ${{ steps.times.outputs.start }}
+          END:   ${{ steps.times.outputs.end }}
+        run: |
+          PAYLOAD="incident[name]=${MAINTENANCE_NAME}&incident[status]=scheduled&incident[body]=${MAINTENANCE_BODY}&incident[scheduled_for]=${START}&incident[scheduled_until]=${END}&incident[scheduled_auto_in_progress]=true&incident[scheduled_auto_completed]=true"
+          curl -sS -o response.json -w "%{http_code}" \
+            "https://api.statuspage.io/v1/pages/${PAGE_ID}/incidents" \
+            -H "Authorization: OAuth ${API_KEY}" \
+            -H "Content-Type: application/x-www-form-urlencoded" \
+            --data "$PAYLOAD"
