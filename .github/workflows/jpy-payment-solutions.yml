@@ -1,20 +1,23 @@
+
 name: "Daily Maintenance — 国内銀行振込２ (00:00–08:00 MYT)"
 
 on:
   schedule:
-    # Post 5 minutes before 00:00 MYT start
-    # 00:00 MYT = 16:00 UTC (previous day), so we post at 15:55 UTC
+    # Post 5 minutes before 00:00 MYT start.
+    # 00:00 MYT = 16:00 UTC (previous day), so we post at 15:55 UTC daily.
     - cron: "55 15 * * *"
   workflow_dispatch:
 
 jobs:
   domestic-bank-maintenance:
     runs-on: ubuntu-latest
+
+    # Secrets must be configured in the repository settings
     env:
       PAGE_ID: ${{ secrets.STATUSPAGE_PAGE_ID }}
       API_KEY: ${{ secrets.STATUSPAGE_API_KEY }}
 
-      # Title & description (adjust as needed)
+      # Title & description
       MAINTENANCE_NAME: "国内銀行振込２"
       MAINTENANCE_BODY: "お知らせ：国内銀行振込２は毎日 00:00〜08:00（MYT）に定期メンテナンスを実施します。"
 
@@ -28,7 +31,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 - << 'PY'
-from datetime import datetime, date, time, timedelta
+from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 myt = ZoneInfo("Asia/Kuala_Lumpur")
@@ -36,11 +39,14 @@ utc = ZoneInfo("UTC")
 
 now = datetime.now(myt)
 
-today_start = datetime.combine(now.date(), time(0, 0), tzinfo=myt)
-if now >= today_start:
-    start_local = today_start + timedelta(days=1)
+# Today's 00:00 MYT
+today_start_local = datetime.combine(now.date(), time(0, 0), tzinfo=myt)
+
+# If we're already past today's 00:00 MYT, schedule for tomorrow 00:00 MYT
+if now >= today_start_local:
+    start_local = today_start_local + timedelta(days=1)
 else:
-    start_local = today_start
+    start_local = today_start_local
 
 end_local = start_local + timedelta(hours=8)
 
@@ -53,7 +59,41 @@ print(f"国内銀行振込２ UTC window: {start_utc} → {end_utc}")
 PY
           | tee /tmp/times.out
 
+          # Export 'start' and 'end' to step outputs
           awk -F= '/^(start|end)=/ {print tolower($0)}' /tmp/times.out >> "$GITHUB_OUTPUT"
+
+      - name: Pre-check (start/end are in the future and valid)
+        shell: bash
+        env:
+          START: ${{ steps.times.outputs.start }}
+          END:   ${{ steps.times.outputs.end }}
+        run: |
+          set -euo pipefail
+          echo "START: $START"
+          echo "END:   $END"
+
+          # Basic validation: ensure end > start and both are in the future relative to UTC now
+          NOW_UTC=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          to_epoch() {
+            date -u -d "$1" +"%s"
+          }
+
+          START_EPOCH=$(to_epoch "$START")
+          END_EPOCH=$(to_epoch "$END")
+          NOW_EPOCH=$(to_epoch "$NOW_UTC")
+
+          if [ "$END_EPOCH" -le "$START_EPOCH" ]; then
+            echo "::error ::END must be later than START."
+            exit 1
+          fi
+
+          if [ "$START_EPOCH" -le "$NOW_EPOCH" ]; then
+            echo "::error ::START must be in the future. START=$START NOW=$NOW_UTC"
+            exit 1
+          fi
+
+          echo "Pre-check OK."
 
       - name: Create scheduled maintenance via Statuspage API
         shell: bash
