@@ -1,4 +1,4 @@
-name: Daily Statuspage Maintenance (MYT 23:55 to 08:50)
+name: "Daily Statuspage Maintenance (MYT 23:55 to 08:50)"
 
 on:
   schedule:
@@ -13,7 +13,7 @@ jobs:
       PAGE_ID: ${{ secrets.STATUSPAGE_PAGE_ID }}
       API_KEY: ${{ secrets.STATUSPAGE_API_KEY }}
 
-      # Custom title & description
+      # Title & description
       MAINTENANCE_NAME: "MTPay is going for Schedule Maintenance"
       MAINTENANCE_BODY: "Hi Team, Please note that MTPay will go on scheduled maintenance."
 
@@ -21,33 +21,21 @@ jobs:
       COMPONENT_CODE: "jb97qs2wnwkk"
 
     steps:
-      - name: Compute scheduled_for and scheduled_until (UTC) using Python
+      - name: Compute scheduled_for and scheduled_until (UTC) with Python one-liners
         id: times
         shell: bash
         run: |
           set -euo pipefail
-          OUTPUT=$(python3 - <<'PY'
-from datetime import datetime, date, time, timedelta
-from zoneinfo import ZoneInfo
 
-myt = ZoneInfo("Asia/Kuala_Lumpur")
-utc = ZoneInfo("UTC")
+          START=$(python3 -c 'from datetime import datetime, date, time, timedelta; from zoneinfo import ZoneInfo; myt=ZoneInfo("Asia/Kuala_Lumpur"); utc=ZoneInfo("UTC"); d=datetime.now(myt).date(); s=datetime.combine(d, time(23,55,0,tzinfo=myt)).astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ"); print(s)')
+          END=$(python3 -c   'from datetime import datetime, date, time, timedelta; from zoneinfo import ZoneInfo; myt=ZoneInfo("Asia/Kuala_Lumpur"); utc=ZoneInfo("UTC"); d=(datetime.now(myt).date()+timedelta(days=1)); e=datetime.combine(d, time(8,50,0,tzinfo=myt)).astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ"); print(e)')
 
-today_myt = datetime.now(myt).date()
+          echo "start=$START" >> "$GITHUB_OUTPUT"
+          echo "end=$END"     >> "$GITHUB_OUTPUT"
 
-start_local = datetime.combine(today_myt, time(23, 55, 0, tzinfo=myt))          # today 23:55 MYT
-end_local   = datetime.combine(today_myt + timedelta(days=1), time(8, 50, 0, tzinfo=myt))  # tomorrow 08:50 MYT
-
-start_utc = start_local.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-end_utc   = end_local.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-print(f"start={start_utc}")
-print(f"end={end_utc}")
-PY
-          )
-          echo "$OUTPUT" >> "$GITHUB_OUTPUT"
           echo "Computed UTC window:"
-          echo "$OUTPUT"
+          echo "scheduled_for   = $START"
+          echo "scheduled_until = $END"
 
       - name: Create scheduled maintenance via Statuspage API
         shell: bash
