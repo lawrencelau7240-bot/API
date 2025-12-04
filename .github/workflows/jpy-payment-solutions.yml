@@ -1,0 +1,98 @@
+name: "Daily Maintenance — 国内銀行振込２ (00:00–08:00 MYT)"
+
+on:
+  schedule:
+    # Post 5 minutes before 00:00 MYT start
+    # 00:00 MYT = 16:00 UTC (previous day), so we post at 15:55 UTC
+    - cron: "55 15 * * *"
+  workflow_dispatch:
+
+jobs:
+  domestic-bank-maintenance:
+    runs-on: ubuntu-latest
+    env:
+      PAGE_ID: ${{ secrets.STATUSPAGE_PAGE_ID }}
+      API_KEY: ${{ secrets.STATUSPAGE_API_KEY }}
+
+      # Title & description (adjust as needed)
+      MAINTENANCE_NAME: "国内銀行振込２"
+      MAINTENANCE_BODY: "お知らせ：国内銀行振込２は毎日 00:00〜08:00（MYT）に定期メンテナンスを実施します。"
+
+      # Component for this maintenance (JPY Payment Solutions)
+      COMPONENT_CODE: "m3dgpl8w4djd"
+
+    steps:
+      - name: Compute scheduled_for and scheduled_until (UTC) — next 00:00→08:00 MYT
+        id: times
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - << 'PY'
+from datetime import datetime, date, time, timedelta
+from zoneinfo import ZoneInfo
+
+myt = ZoneInfo("Asia/Kuala_Lumpur")
+utc = ZoneInfo("UTC")
+
+now = datetime.now(myt)
+
+today_start = datetime.combine(now.date(), time(0, 0), tzinfo=myt)
+if now >= today_start:
+    start_local = today_start + timedelta(days=1)
+else:
+    start_local = today_start
+
+end_local = start_local + timedelta(hours=8)
+
+start_utc = start_local.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+end_utc   = end_local.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+print(f"start={start_utc}")
+print(f"end={end_utc}")
+print(f"国内銀行振込２ UTC window: {start_utc} → {end_utc}")
+PY
+          | tee /tmp/times.out
+
+          awk -F= '/^(start|end)=/ {print tolower($0)}' /tmp/times.out >> "$GITHUB_OUTPUT"
+
+      - name: Create scheduled maintenance via Statuspage API
+        shell: bash
+        env:
+          START: ${{ steps.times.outputs.start }}
+          END:   ${{ steps.times.outputs.end }}
+        run: |
+          set -euo pipefail
+          echo "Scheduling 国内銀行振込２ ${START} -> ${END} (UTC) with component ${COMPONENT_CODE}"
+
+          HTTP_CODE=$(curl -sS -o response.json -w "%{http_code}" \
+            "https://api.statuspage.io/v1/pages/${PAGE_ID}/incidents" \
+            -H "Authorization: OAuth ${API_KEY}" \
+            -H "Content-Type: application/x-www-form-urlencoded" \
+            --data-urlencode "incident[name]=${MAINTENANCE_NAME}" \
+            --data-urlencode "incident[status]=scheduled" \
+            --data-urlencode "incident[body]=${MAINTENANCE_BODY}" \
+            --data-urlencode "incident[scheduled_for]=${START}" \
+            --data-urlencode "incident[scheduled_until]=${END}" \
+            --data-urlencode "incident[scheduled_auto_in_progress]=true" \
+            --data-urlencode "incident[scheduled_auto_completed]=true" \
+            --data-urlencode "incident[incident_updates][0][status]=scheduled" \
+            --data-urlencode "incident[incident_updates][0][affected_components][0][code]=${COMPONENT_CODE}" \
+            --data-urlencode "incident[incident_updates][0][affected_components][0][new_status]=under_maintenance" )
+
+          echo "HTTP status: $HTTP_CODE"
+          cat response.json || true
+
+          if [ "$HTTP_CODE" -ge 300 ]; then
+            echo "::error ::Failed to create 国内銀行振込２ maintenance. See response above."
+            exit 1
+          fi
+
+      - name: Summary
+        shell: bash
+        env:
+          START: ${{ steps.times.outputs.start }}
+          END:   ${{ steps.times.outputs.end }}
+        run: |
+          echo "✅ 国内銀行振込２ scheduled (00:00–08:00 MYT)."
+          echo "Window (UTC): ${START} -> ${END}"
+          echo "Component: ${COMPONENT_CODE} (JPY Payment Solutions)"
