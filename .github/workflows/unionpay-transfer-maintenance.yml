@@ -16,7 +16,6 @@ jobs:
       API_KEY: ${{ secrets.STATUSPAGE_API_KEY }}
 
       MAINTENANCE_NAME: "银联转账"
-      # Shown in the incident card; we'll also include a brief first update below.
       MAINTENANCE_BODY: "提醒：银联转账将于每日 23:30–08:00（MYT/GMT+8）进行例行维护，届时服务可能受限。"
       COMPONENT_CODE: "jb97qs2wnwkk"
 
@@ -34,27 +33,38 @@ jobs:
         run: |
           set -euo pipefail
 
-          # START (next 23:30 MYT) → UTC
-          START=$(python3 -c 'from datetime import datetime, time, timedelta; from zoneinfo import ZoneInfo
-now=datetime.now(ZoneInfo("Asia/Kuala_Lumpur"))
-myt=ZoneInfo("Asia/Kuala_Lumpur"); utc=ZoneInfo("UTC")
-target_t=time(23,30)
-today_target=datetime.combine(now.date(), target_t, tzinfo=myt)
-start_local=today_target if now < today_target else today_target + timedelta(days=1)
-print(start_local.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ"))')
+          # Compute START (next 23:30 MYT) in UTC ISO 8601 (using heredoc to avoid YAML quoting issues)
+          START=$(python3 - <<'PY'
+from datetime import datetime, time, timedelta
+from zoneinfo import ZoneInfo
+myt = ZoneInfo("Asia/Kuala_Lumpur")
+utc = ZoneInfo("UTC")
+now = datetime.now(myt)
+target_t = time(23, 30)
+today_target = datetime.combine(now.date(), target_t, tzinfo=myt)
+start_local = today_target if now < today_target else today_target + timedelta(days=1)
+print(start_local.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+PY
+)
 
-          # END = START + 8h30m → UTC
-          END=$(python3 -c 'from datetime import datetime, time, timedelta; from zoneinfo import ZoneInfo
-now=datetime.now(ZoneInfo("Asia/Kuala_Lumpur"))
-myt=ZoneInfo("Asia/Kuala_Lumpur"); utc=ZoneInfo("UTC")
-target_t=time(23,30)
-today_target=datetime.combine(now.date(), target_t, tzinfo=myt)
-start_local=today_target if now < today_target else today_target + timedelta(days=1)
-end_local=start_local + timedelta(hours=8, minutes=30)
-print(end_local.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ"))')
+          # Compute END (START + 8h30m) in UTC ISO 8601
+          END=$(python3 - <<'PY'
+from datetime import datetime, time, timedelta
+from zoneinfo import ZoneInfo
+myt = ZoneInfo("Asia/Kuala_Lumpur")
+utc = ZoneInfo("UTC")
+now = datetime.now(myt)
+target_t = time(23, 30)
+today_target = datetime.combine(now.date(), target_t, tzinfo=myt)
+start_local = today_target if now < today_target else today_target + timedelta(days=1)
+end_local = start_local + timedelta(hours=8, minutes=30)
+print(end_local.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+PY
+)
 
           echo "start=$START" >> "$GITHUB_OUTPUT"
           echo "end=$END"     >> "$GITHUB_OUTPUT"
+
           echo "银联转账 UTC window: $START → $END"
 
       - name: Pre-check (start/end are in the future and valid)
@@ -82,6 +92,7 @@ print(end_local.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ"))')
             echo "::error ::START must be in the future. START=$START NOW=$NOW_UTC"
             exit 1
           fi
+
           echo "Pre-check OK."
 
       - name: Create scheduled maintenance via Statuspage API (announce now)
@@ -93,7 +104,6 @@ print(end_local.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ"))')
           set -euo pipefail
           echo "Scheduling 银联转账 ${START} -> ${END} (UTC) — posting now"
 
-          # Build a short "first update" body that appears immediately
           FIRST_UPDATE="提前通知：银联转账将于 ${START}（UTC）至 ${END}（UTC）进行例行维护（当地时间 23:30–08:00 MYT/GMT+8）。"
 
           HTTP_CODE=$(curl -sS -o response.json -w "%{http_code}" \
