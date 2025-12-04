@@ -1,8 +1,8 @@
-name: "Daily Maintenance — 本地银行转账 (22:30–09:30 GMT+8, posted a day before)"
+name: "Daily Maintenance — 本地银行转账 (22:30–09:30 GMT+8, post now)"
 
 on:
   schedule:
-    # Post 5 minutes before 22:30 MYT start -> 22:25 MYT == 14:25 UTC daily
+    # Optional: still run daily 5 minutes before 22:30 MYT (14:25 UTC)
     - cron: "25 14 * * *"
   workflow_dispatch:
 
@@ -15,22 +15,44 @@ jobs:
       API_KEY: ${{ secrets.STATUSPAGE_API_KEY }}
 
       MAINTENANCE_NAME: "本地银行转账"
-      MAINTENANCE_BODY: "通知：本地银行转账每日 22:30–09:30（GMT+8）进行常规维护。此公告会提前一天发布。"
+      # Removed the '提前一天发布' wording so it's correct when posting immediately.
+      MAINTENANCE_BODY: "通知：本地银行转账每日 22:30–09:30（GMT+8）进行常规维护。"
       COMPONENT_CODE: "jb97qs2wnwkk"
 
     steps:
-      - name: Compute scheduled_for / scheduled_until — tomorrow 22:30→09:30 (GMT+8)
+      - name: Compute scheduled_for / scheduled_until — choose TODAY 22:30→09:30 if still future, else TOMORROW
         id: times
         shell: bash
         run: |
           set -euo pipefail
-          # START: Tomorrow 22:30 MYT (always a day ahead)
-          START=$(python3 -c 'from datetime import datetime, time, timedelta; from zoneinfo import ZoneInfo; tz=ZoneInfo("Asia/Kuala_Lumpur"); utc=ZoneInfo("UTC"); now=datetime.now(tz); today_start=datetime.combine(now.date(), time(22,30), tzinfo=tz); start_local=today_start + timedelta(days=1); print(start_local.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ"))')
-          # END: Tomorrow + 11 hours => 09:30 next day
-          END=$(python3 -c 'from datetime import datetime, time, timedelta; from zoneinfo import ZoneInfo; tz=ZoneInfo("Asia/Kuala_Lumpur"); utc=ZoneInfo("UTC"); now=datetime.now(tz); today_start=datetime.combine(now.date(), time(22,30), tzinfo=tz); start_local=today_start + timedelta(days=1); end_local=start_local + timedelta(hours=11); print(end_local.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ"))')
-          echo "start=$START" >> "$GITHUB_OUTPUT"
-          echo "end=$END"     >> "$GITHUB_OUTPUT"
-          echo "本地银行转账 UTC window (tomorrow): $START → $END"
+          python3 - <<'PY'
+          from datetime import datetime, time, timedelta
+          from zoneinfo import ZoneInfo
+
+          tz = ZoneInfo("Asia/Kuala_Lumpur")
+          utc = ZoneInfo("UTC")
+
+          now_local = datetime.now(tz)
+          today_start_local = datetime.combine(now_local.date(), time(22,30), tzinfo=tz)
+
+          # If we're before 22:30 local time, schedule for TODAY; else schedule for TOMORROW
+          if now_local < today_start_local:
+              start_local = today_start_local
+          else:
+              start_local = today_start_local + timedelta(days=1)
+
+          end_local = start_local + timedelta(hours=11)  # 22:30 -> 09:30 next day
+
+          start_utc = start_local.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+          end_utc = end_local.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+          print(f"start={start_utc}")
+          print(f"end={end_utc}")
+          PY
+          # Export to GITHUB_OUTPUT
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          print(open('stdout').read(), end='')
+          PY
 
       - name: Pre-check (start/end are in the future and valid)
         shell: bash
@@ -78,6 +100,6 @@ jobs:
           START: ${{ steps.times.outputs.start }}
           END:   ${{ steps.times.outputs.end }}
         run: |
-          echo "✅ 本地银行转账 scheduled (22:30–09:30 GMT+8, posted a day before)."
+          echo "✅ 本地银行转账 scheduled (22:30–09:30 GMT+8, posted now)."
           echo "Window (UTC): ${START} -> ${END}"
           echo "Component: ${COMPONENT_CODE}"
