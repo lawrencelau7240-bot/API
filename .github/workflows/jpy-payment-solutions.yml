@@ -18,7 +18,7 @@ jobs:
 
       # Title & description
       MAINTENANCE_NAME: "国内銀行振込２"
-      MAINTENANCE_BODY: "お知らせ：国内銀行振込２は毎日 00:00〜08:00（MYT）に定期メンテナンスを実施します。"
+      MAINTENANCE_BODY: "お知らせ：国内銀行振込２は毎日 00:31〜07:59（GMT+8）に定期メンテナンスを実施します。"
 
       # Component for this maintenance (JPY Payment Solutions)
       COMPONENT_CODE: "m3dgpl8w4djd"
