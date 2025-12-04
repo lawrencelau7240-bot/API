@@ -28,7 +28,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 - << 'PY'
+          cat << 'PY' | python3 -
 from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
