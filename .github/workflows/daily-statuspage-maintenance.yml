@@ -1,4 +1,4 @@
-name: "Daily Statuspage Maintenance (MYT 23:55 to 08:50)"
+name: Daily Statuspage Maintenance (MYT 23:55 to 08:50)
 
 on:
   schedule:
@@ -21,35 +21,35 @@ jobs:
       COMPONENT_CODE: "jb97qs2wnwkk"
 
     steps:
-      - name: "Compute scheduled_for/scheduled_until (UTC) using Python (MYT base)"
+      - name: Compute scheduled_for and scheduled_until (UTC) using Python
         id: times
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY' > times.env
+          OUTPUT=$(python3 - <<'PY'
 from datetime import datetime, date, time, timedelta
 from zoneinfo import ZoneInfo
 
 myt = ZoneInfo("Asia/Kuala_Lumpur")
 utc = ZoneInfo("UTC")
 
-# Date in MYT when this job runs
 today_myt = datetime.now(myt).date()
 
-# Start: today 23:55 MYT
-start_local = datetime.combine(today_myt, time(23, 55, 0, tzinfo=myt))
-# End: tomorrow 08:50 MYT
-end_local = datetime.combine(today_myt + timedelta(days=1), time(8, 50, 0, tzinfo=myt))
+start_local = datetime.combine(today_myt, time(23, 55, 0, tzinfo=myt))          # today 23:55 MYT
+end_local   = datetime.combine(today_myt + timedelta(days=1), time(8, 50, 0, tzinfo=myt))  # tomorrow 08:50 MYT
 
-print("start=" + start_local.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
-print("end="   + end_local.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+start_utc = start_local.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+end_utc   = end_local.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+print(f"start={start_utc}")
+print(f"end={end_utc}")
 PY
-          # Register step outputs
-          cat times.env >> "$GITHUB_OUTPUT"
+          )
+          echo "$OUTPUT" >> "$GITHUB_OUTPUT"
           echo "Computed UTC window:"
-          cat times.env
+          echo "$OUTPUT"
 
-      - name: "Create scheduled maintenance via Statuspage API"
+      - name: Create scheduled maintenance via Statuspage API
         shell: bash
         env:
           START: ${{ steps.times.outputs.start }}
@@ -81,12 +81,12 @@ PY
             exit 1
           fi
 
-      - name: "Summary"
+      - name: Summary
         shell: bash
         env:
           START: ${{ steps.times.outputs.start }}
           END:   ${{ steps.times.outputs.end }}
         run: |
-          echo "✅ Scheduled maintenance created."
+          echo "Scheduled maintenance created."
           echo "Title: ${MAINTENANCE_NAME}"
           echo "Window (UTC): ${START} -> ${END}"
