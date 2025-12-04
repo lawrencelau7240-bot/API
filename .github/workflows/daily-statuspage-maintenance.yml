@@ -3,7 +3,8 @@ name: Daily Statuspage Maintenance (MYT 23:55 → 08:50)
 
 on:
   schedule:
-    - cron: "50 15 * * *"  # Runs daily at 15:50 UTC (23:50 MYT)
+    # Run 5 minutes before the window starts: 15:50 UTC (23:50 MYT)
+    - cron: "50 15 * * *"
   workflow_dispatch:
 
 jobs:
@@ -12,35 +13,82 @@ jobs:
     env:
       PAGE_ID: ${{ secrets.STATUSPAGE_PAGE_ID }}
       API_KEY: ${{ secrets.STATUSPAGE_API_KEY }}
+
+      # Custom title & description
       MAINTENANCE_NAME: "MTPay is going for Schedule Maintenance"
       MAINTENANCE_BODY: "Hi Team,\n\nPlease note that MTPay will go on scheduled maintenance."
+
+      # Maintenance window in MYT (UTC+8)
       START_MYT_HOUR: "23"
       START_MYT_MIN:  "55"
       END_MYT_HOUR:   "8"
       END_MYT_MIN:    "50"
       TZ_OFFSET_HOURS: "8"
 
+      # Component to mark under maintenance
+      COMPONENT_CODE: "jb97qs2wnwkk"
+
     steps:
-      - name: Compute scheduled_for/scheduled_until (UTC)
+      - name: Compute scheduled_for/scheduled_until (UTC), handling midnight crossover
         id: times
+        shell: bash
         run: |
+          set -euo pipefail
+
           TODAY_UTC=$(date -u +%Y-%m-%d)
+
+          # START (23:55 MYT same day) -> UTC
           START_MYT_TODAY="${TODAY_UTC} ${START_MYT_HOUR}:${START_MYT_MIN}:00"
           START_UTC=$(date -u -d "${START_MYT_TODAY} - ${TZ_OFFSET_HOURS} hours" +"%Y-%m-%dT%H:%M:%SZ")
+
+          # END (08:50 MYT next day) -> UTC
           NEXTDAY_UTC=$(date -u -d "${TODAY_UTC} + 1 day" +%Y-%m-%d)
           END_MYT_NEXTDAY="${NEXTDAY_UTC} ${END_MYT_HOUR}:${END_MYT_MIN}:00"
           END_UTC=$(date -u -d "${END_MYT_NEXTDAY} - ${TZ_OFFSET_HOURS} hours" +"%Y-%m-%dT%H:%M:%SZ")
+
           echo "start=${START_UTC}" >> $GITHUB_OUTPUT
           echo "end=${END_UTC}" >> $GITHUB_OUTPUT
 
-      - name: Create scheduled maintenance via Statuspage API
+          echo "Planned window (UTC):"
+          echo "  scheduled_for   = ${START_UTC}"
+          echo "  scheduled_until = ${END_UTC}"
+
+      - name: Create scheduled maintenance via Statuspage API (with affected component)
         env:
           START: ${{ steps.times.outputs.start }}
           END:   ${{ steps.times.outputs.end }}
         run: |
-          PAYLOAD="incident[name]=${MAINTENANCE_NAME}&incident[status]=scheduled&incident[body]=${MAINTENANCE_BODY}&incident[scheduled_for]=${START}&incident[scheduled_until]=${END}&incident[scheduled_auto_in_progress]=true&incident[scheduled_auto_completed]=true"
-          curl -sS -o response.json -w "%{http_code}" \
+          set -euo pipefail
+
+          # x-www-form-urlencoded payload
+          # We include an initial incident update with the component marked as "under_maintenance"
+          # so when the window flips to "In Progress", the component reflects the status.
+          PAYLOAD=$(cat <<EOF
+incident[name]=${MAINTENANCE_NAME}&
+incident[status]=scheduled&
+incident[body]=${MAINTENANCE_BODY}&
+incident[scheduled_for]=${START}&
+incident[scheduled_until]=${END}&
+incident[scheduled_auto_in_progress]=true&
+incident[scheduled_auto_completed]=true&
+incident[incident_updates][0][status]=scheduled&
+incident[incident_updates][0][affected_components][0][code]=${COMPONENT_CODE}&
+incident[incident_updates][0][affected_components][0][new_status]=under_maintenance
+EOF
+          )
+          PAYLOAD=$(echo "$PAYLOAD" | tr -d '\n')
+
+          echo "Scheduling maintenance from ${START} to ${END} (UTC) for component ${COMPONENT_CODE}..."
+          HTTP_CODE=$(curl -sS -o response.json -w "%{http_code}" \
             "https://api.statuspage.io/v1/pages/${PAGE_ID}/incidents" \
             -H "Authorization: OAuth ${API_KEY}" \
             -H "Content-Type: application/x-www-form-urlencoded" \
-            --data "$PAYLOAD"
+            --data "$PAYLOAD")
+
+          echo "HTTP status: $HTTP_CODE"
+          cat response.json || true
+          test "$HTTP_CODE" -lt 300
+
+      - name: Summary
+        run: |
+          echo "Daily scheduled maintenance created with affected component."
