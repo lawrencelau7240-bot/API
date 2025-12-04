@@ -14,10 +14,9 @@ jobs:
       MAINTENANCE_NAME: "本地银行"
       MAINTENANCE_BODY: "【即时维护开始】本地银行正在进行维护（立即开始至本地时间08:00）。"
       COMPONENT_CODE: "jb97qs2wnwkk"
-      TZ_NAME: "Asia/Kuala_Lumpur"
 
     steps:
-      - name: Compute START (now UTC) and END (next 08:00 local converted to UTC)
+      - name: Compute START (now UTC) and END (next 08:00 local → UTC)
         id: times
         shell: bash
         run: |
@@ -26,41 +25,13 @@ jobs:
           # START: Now in UTC
           START="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 
-          # END: Next local 08:00 (if current local time < 08:00, use today 08:00; else tomorrow 08:00), converted to UTC
-          END=$(python3 -c 'from datetime import datetime, time, timedelta; from zoneinfo import ZoneInfo
-tz=ZoneInfo("Asia/Kuala_Lumpur"); utc=ZoneInfo("UTC")
-now=datetime.now(tz)
-target_date = now.date() if now.time() < time(8,0) else (now + timedelta(days=1)).date()
-end_local = datetime.combine(target_date, time(8,0), tzinfo=tz)
-print(end_local.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ"))')
+          # END: Next Asia/Kuala_Lumpur 08:00 converted to UTC
+          END=$(python3 -c 'from datetime import datetime, time, timedelta; from zoneinfo import ZoneInfo; tz=ZoneInfo("Asia/Kuala_Lumpur"); utc=ZoneInfo("UTC"); now=datetime.now(tz); target_date = now.date() if now.time() < time(8,0) else (now + timedelta(days=1)).date(); end_local = datetime.combine(target_date, time(8,0), tzinfo=tz); print(end_local.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ"))')
 
           echo "start=$START" >> "$GITHUB_OUTPUT"
           echo "end=$END"     >> "$GITHUB_OUTPUT"
 
           echo "本地银行 (POST NOW) — UTC window: $START → $END"
-
-      - name: Echo local and UTC times (sanity)
-        shell: bash
-        env:
-          START: ${{ steps.times.outputs.start }}
-          END:   ${{ steps.times.outputs.end }}
-        run: |
-          set -euo pipefail
-          echo "START (UTC): $START"
-          echo "END   (UTC): $END"
-          python3 - << 'PY'
-from datetime import datetime
-from zoneinfo import ZoneInfo
-import os
-utc = ZoneInfo("UTC")
-tz  = ZoneInfo("Asia/Kuala_Lumpur")
-fmt = "%Y-%m-%d %H:%M:%S %Z"
-def show(label, s):
-    dt = datetime.strptime(s, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=utc)
-    print(f"{label} (Local GMT+8): {dt.astimezone(tz).strftime(fmt)}")
-show("START", os.environ["START"])
-show("END  ", os.environ["END"])
-PY
 
       - name: Create IN-PROGRESS incident NOW via Statuspage API
         shell: bash
