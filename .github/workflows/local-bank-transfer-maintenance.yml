@@ -15,13 +15,13 @@ concurrency:
   group: statuspage-local-bank-maintenance
   cancel-in-progress: false
 
+# ---- Workflow-level env (inherited by jobs/steps) ----
 env:
-  # -- REQUIRED: add these as repository secrets --
-  #   Settings > Secrets and variables > Actions > New repository secret
+  # REQUIRED: repository secrets
   STATUSPAGE_PAGE_ID: ${{ secrets.STATUSPAGE_PAGE_ID }}
   STATUSPAGE_API_KEY: ${{ secrets.STATUSPAGE_API_KEY }}
 
-  # -- Customize these --
+  # Customize these
   MAINTENANCE_NAME: "本地银行转账"
   MAINTENANCE_BODY: "通知：本地银行转账每日 22:30–09:30（GMT+8）进行常规维护。"
   COMPONENT_CODE: "jb97qs2wnwkk"  # <-- replace with your Statuspage component code
@@ -30,20 +30,13 @@ jobs:
   local-bank-transfer-maintenance:
     runs-on: ubuntu-latest
 
-    env:
-      PAGE_ID: ${{ env.STATUSPAGE_PAGE_ID }}
-      API_KEY: ${{ env.STATUSPAGE_API_KEY }}
-      MAINTENANCE_NAME: ${{ env.MAINTENANCE_NAME }}
-      MAINTENANCE_BODY: ${{ env.MAINTENANCE_BODY }}
-      COMPONENT_CODE: ${{ env.COMPONENT_CODE }}
-
     steps:
       - name: Validate secrets
         shell: bash
         run: |
           set -euo pipefail
-          [ -n "${PAGE_ID:-}" ] || { echo "::error ::Missing STATUSPAGE_PAGE_ID secret."; exit 1; }
-          [ -n "${API_KEY:-}" ] || { echo "::error ::Missing STATUSPAGE_API_KEY secret."; exit 1; }
+          [ -n "${STATUSPAGE_PAGE_ID:-}" ] || { echo "::error ::Missing STATUSPAGE_PAGE_ID secret."; exit 1; }
+          [ -n "${STATUSPAGE_API_KEY:-}" ] || { echo "::error ::Missing STATUSPAGE_API_KEY secret."; exit 1; }
 
       - name: Compute scheduled_for / scheduled_until — today if future else tomorrow
         id: times
@@ -105,8 +98,8 @@ jobs:
           set -euo pipefail
           echo "Scheduling 本地银行转账 ${START} -> ${END} (UTC) with component ${COMPONENT_CODE}"
           HTTP_CODE=$(curl -sS -o response.json -w "%{http_code}" \
-            "https://api.statuspage.io/v1/pages/${PAGE_ID}/incidents" \
-            -H "Authorization: OAuth ${API_KEY}" \
+            "https://api.statuspage.io/v1/pages/${STATUSPAGE_PAGE_ID}/incidents" \
+            -H "Authorization: OAuth ${STATUSPAGE_API_KEY}" \
             -H "Content-Type: application/x-www-form-urlencoded" \
             --data-urlencode "incident[name]=${MAINTENANCE_NAME}" \
             --data-urlencode "incident[status]=scheduled" \
@@ -133,7 +126,6 @@ jobs:
           START: ${{ steps.times.outputs.start }}
           END:   ${{ steps.times.outputs.end }}
           INCIDENT_ID: ${{ steps.create.outputs.incident_id }}
-          COMPONENT_CODE: ${{ env.COMPONENT_CODE }}
         run: |
           {
             echo "## ✅ 本地银行转账 Scheduled"
