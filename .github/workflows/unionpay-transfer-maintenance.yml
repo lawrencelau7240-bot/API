@@ -3,7 +3,7 @@ name: "Daily Maintenance — 银联转账 (23:30–08:00 MYT/GMT+8)"
 on:
   schedule:
     # Post 5 minutes before 23:30 MYT start.
-    # 23:30 MYT = 15:30 UTC, so post at 15:25 UTC daily.
+    # 23:30 MYT = 15:30 UTC (same day), so we post at 15:25 UTC daily.
     - cron: "25 15 * * *"
   workflow_dispatch:
 
@@ -32,14 +32,32 @@ jobs:
         run: |
           set -euo pipefail
 
-          # START (next 23:30 MYT) → UTC
-          START=$(python3 -c 'from datetime import datetime, time, timedelta; from zoneinfo import ZoneInfo; myt=ZoneInfo("Asia/Kuala_Lumpur"); utc=ZoneInfo("UTC"); now=datetime.now(myt); target_t=time(23,30); today_target=datetime.combine(now.date(), target_t, tzinfo=myt); start_local=today_target if now < today_target else today_target + timedelta(days=1); print(start_local.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ"))')
+          # Write a tiny Python helper to avoid YAML quoting/indent issues
+          cat > compute_times.py <<'PY'
+from datetime import datetime, time, timedelta
+from zoneinfo import ZoneInfo
 
-          # END = START + 8h30m → UTC
-          END=$(python3 -c 'from datetime import datetime, time, timedelta; from zoneinfo import ZoneInfo; myt=ZoneInfo("Asia/Kuala_Lumpur"); utc=ZoneInfo("UTC"); now=datetime.now(myt); target_t=time(23,30); today_target=datetime.combine(now.date(), target_t, tzinfo=myt); start_local=today_target if now < today_target else today_target + timedelta(days=1); end_local=start_local + timedelta(hours=8, minutes=30); print(end_local.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ"))')
+myt = ZoneInfo("Asia/Kuala_Lumpur")
+utc = ZoneInfo("UTC")
+
+now = datetime.now(myt)
+target = time(23, 30)
+today_target = datetime.combine(now.date(), target, tzinfo=myt)
+start_local = today_target if now < today_target else today_target + timedelta(days=1)
+end_local = start_local + timedelta(hours=8, minutes=30)
+
+START = start_local.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+END   = end_local.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+print(START)
+print(END)
+PY
+
+          read START END < <(python3 compute_times.py)
 
           echo "start=$START" >> "$GITHUB_OUTPUT"
           echo "end=$END"     >> "$GITHUB_OUTPUT"
+
           echo "银联转账 UTC window: $START → $END"
 
       - name: Pre-check (start/end are in the future and valid)
@@ -53,6 +71,7 @@ jobs:
           echo "END:   $END"
 
           NOW_UTC=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
           to_epoch() { date -u -d "$1" +"%s"; }
           START_EPOCH=$(to_epoch "$START")
           END_EPOCH=$(to_epoch "$END")
