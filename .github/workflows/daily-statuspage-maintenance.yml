@@ -1,13 +1,13 @@
-name: Daily Statuspage Maintenance (MYT 23:55 → 08:50)
+name: "Daily Statuspage Maintenance (MYT 23:55 to 08:50)"
 
 on:
   schedule:
-    # Runs daily at 15:50 UTC (23:50 MYT) — 5 minutes before start
+    # Runs daily at 15:50 UTC (23:50 MYT) — 5 minutes before the 23:55 start
     - cron: "50 15 * * *"
   workflow_dispatch:
 
 jobs:
-  create-scheduled-maintenance:
+  schedule-statuspage:
     runs-on: ubuntu-latest
     env:
       PAGE_ID: ${{ secrets.STATUSPAGE_PAGE_ID }}
@@ -15,19 +15,17 @@ jobs:
 
       # Custom title & description
       MAINTENANCE_NAME: "MTPay is going for Schedule Maintenance"
-      MAINTENANCE_BODY: "Hi Team,\n\nPlease note that MTPay will go on scheduled maintenance."
+      MAINTENANCE_BODY: "Hi Team, Please note that MTPay will go on scheduled maintenance."
 
       # Component to mark under maintenance
       COMPONENT_CODE: "jb97qs2wnwkk"
 
     steps:
-      - name: Compute scheduled_for/scheduled_until (UTC) using Python (MYT base)
+      - name: "Compute scheduled_for/scheduled_until (UTC) using Python (MYT base)"
         id: times
         shell: bash
         run: |
           set -euo pipefail
-
-          # Use Python's zoneinfo to compute local MYT times, then convert to UTC ISO8601
           python3 - <<'PY' > times.env
 from datetime import datetime, date, time, timedelta
 from zoneinfo import ZoneInfo
@@ -43,31 +41,23 @@ start_local = datetime.combine(today_myt, time(23, 55, 0, tzinfo=myt))
 # End: tomorrow 08:50 MYT
 end_local = datetime.combine(today_myt + timedelta(days=1), time(8, 50, 0, tzinfo=myt))
 
-start_utc = start_local.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-end_utc   = end_local.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-print("start=" + start_utc)
-print("end="   + end_utc)
+print("start=" + start_local.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+print("end="   + end_local.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
 PY
-
-          # Export the computed values to the job's outputs
+          # Register step outputs
           cat times.env >> "$GITHUB_OUTPUT"
+          echo "Computed UTC window:"
+          cat times.env
 
-          echo "Planned window (UTC):"
-          echo "  scheduled_for   = $(grep '^start=' times.env | cut -d= -f2-)"
-          echo "  scheduled_until = $(grep '^end='   times.env | cut -d= -f2-)"
-
-      - name: Create scheduled maintenance via Statuspage API (with affected component)
+      - name: "Create scheduled maintenance via Statuspage API"
         shell: bash
         env:
           START: ${{ steps.times.outputs.start }}
           END:   ${{ steps.times.outputs.end }}
         run: |
           set -euo pipefail
+          echo "Scheduling ${START} -> ${END} (UTC) for component ${COMPONENT_CODE}"
 
-          echo "Scheduling maintenance from ${START} to ${END} (UTC) for component ${COMPONENT_CODE}..."
-
-          # Use --data-urlencode for safe form encoding
           HTTP_CODE=$(curl -sS -o response.json -w "%{http_code}" \
             "https://api.statuspage.io/v1/pages/${PAGE_ID}/incidents" \
             -H "Authorization: OAuth ${API_KEY}" \
@@ -81,8 +71,7 @@ PY
             --data-urlencode "incident[scheduled_auto_completed]=true" \
             --data-urlencode "incident[incident_updates][0][status]=scheduled" \
             --data-urlencode "incident[incident_updates][0][affected_components][0][code]=${COMPONENT_CODE}" \
-            --data-urlencode "incident[incident_updates][0][affected_components][0][new_status]=under_maintenance" \
-          )
+            --data-urlencode "incident[incident_updates][0][affected_components][0][new_status]=under_maintenance" )
 
           echo "HTTP status: $HTTP_CODE"
           cat response.json || true
@@ -92,9 +81,12 @@ PY
             exit 1
           fi
 
-      - name: Summary
+      - name: "Summary"
         shell: bash
+        env:
+          START: ${{ steps.times.outputs.start }}
+          END:   ${{ steps.times.outputs.end }}
         run: |
-          echo "✅ Daily scheduled maintenance created with component ${COMPONENT_CODE}."
+          echo "✅ Scheduled maintenance created."
           echo "Title: ${MAINTENANCE_NAME}"
-          echo "Window (UTC): ${START} → ${END}"
+          echo "Window (UTC): ${START} -> ${END}"
