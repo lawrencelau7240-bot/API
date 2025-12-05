@@ -15,20 +15,63 @@ jobs:
 
       # Title & description
       MAINTENANCE_NAME: "MTPay 每日维护"
-      MAINTENANCE_BODY: "将于每日23:50-08:50 (GMT+8) 进行例行维护"
+      MAINTENANCE_BODY: "将于每日23:55-08:50 (GMT+8) 进行例行维护"
 
       # Component to mark under maintenance
       COMPONENT_CODE: "jb97qs2wnwkk"
 
     steps:
-      - name: Compute scheduled_for and scheduled_until (UTC) with Python one-liners
+      - name: Compute scheduled_for and scheduled_until (UTC) with Python
         id: times
         shell: bash
         run: |
           set -euo pipefail
 
-          START=$(python3 -c 'from datetime import datetime, date, time, timedelta; from zoneinfo import ZoneInfo; myt=ZoneInfo("Asia/Kuala_Lumpur"); utc=ZoneInfo("UTC"); d=datetime.now(myt).date(); s=datetime.combine(d, time(23,55,0,tzinfo=myt)).astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ"); print(s)')
-          END=$(python3 -c   'from datetime import datetime, date, time, timedelta; from zoneinfo import ZoneInfo; myt=ZoneInfo("Asia/Kuala_Lumpur"); utc=ZoneInfo("UTC"); d=(datetime.now(myt).date()+timedelta(days=1)); e=datetime.combine(d, time(8,50,0,tzinfo=myt)).astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ"); print(e)')
+          START=$(python3 - <<'PY'
+from datetime import datetime, date, time, timedelta
+from zoneinfo import ZoneInfo
+
+myt = ZoneInfo("Asia/Kuala_Lumpur")
+utc = ZoneInfo("UTC")
+
+now_myt = datetime.now(myt)
+today_start_myt = datetime.combine(now_myt.date(), time(23, 55, 0, tzinfo=myt))
+
+if now_myt >= today_start_myt:
+    start_myt = today_start_myt + timedelta(days=1)
+else:
+    start_myt = today_start_myt
+
+# Optional buffer (uncomment if needed):
+# buffer = now_myt + timedelta(minutes=5)
+# if start_myt <= buffer:
+#     start_myt = start_myt + timedelta(days=1)
+
+start_utc = start_myt.astimezone(utc)
+print(start_utc.strftime("%Y-%m-%dT%H:%M:%SZ"))
+PY
+          )
+
+          END=$(python3 - <<'PY'
+from datetime import datetime, date, time, timedelta
+from zoneinfo import ZoneInfo
+
+myt = ZoneInfo("Asia/Kuala_Lumpur")
+utc = ZoneInfo("UTC")
+
+now_myt = datetime.now(myt)
+today_start_myt = datetime.combine(now_myt.date(), time(23, 55, 0, tzinfo=myt))
+
+if now_myt >= today_start_myt:
+    start_myt = today_start_myt + timedelta(days=1)
+else:
+    start_myt = today_start_myt
+
+end_myt = datetime.combine((start_myt + timedelta(days=1)).date(), time(8, 50, 0, tzinfo=myt))
+end_utc = end_myt.astimezone(utc)
+print(end_utc.strftime("%Y-%m-%dT%H:%M:%SZ"))
+PY
+          )
 
           echo "start=$START" >> "$GITHUB_OUTPUT"
           echo "end=$END"     >> "$GITHUB_OUTPUT"
