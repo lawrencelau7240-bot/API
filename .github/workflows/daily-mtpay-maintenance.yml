@@ -28,7 +28,7 @@ jobs:
       # Component to mark under maintenance
       COMPONENT_CODE: "jb97qs2wnwkk"
 
-      # Safety buffer in minutes (used to ensure START is comfortably in the future)
+      # Safety buffer in minutes to ensure START is comfortably in the future
       BUFFER_MINUTES: "10"
 
     steps:
@@ -38,27 +38,11 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Compute START UTC for the next future 23:55 MYT, with BUFFER_MINUTES
-          START=$(python3 -c "from datetime import datetime,date,time,timedelta;from zoneinfo import ZoneInfo;
-myt=ZoneInfo('Asia/Kuala_Lumpur');utc=ZoneInfo('UTC');
-now=datetime.now(myt);
-target=datetime.combine(now.date(),time(23,55,0,tzinfo=myt));
-start=target if now<target else target+timedelta(days=1);
-buffer=now+timedelta(minutes=int('${BUFFER_MINUTES}'));
-# if start is too close (<= buffer), push to the next day's target
-start= (target+timedelta(days=1)) if start<=buffer else start;
-print(start.astimezone(utc).strftime('%Y-%m-%dT%H:%M:%SZ'))")
+          # START: next future 23:55 MYT with buffer
+          START=$(python3 -c 'from datetime import datetime,date,time,timedelta;from zoneinfo import ZoneInfo; myt=ZoneInfo("Asia/Kuala_Lumpur"); utc=ZoneInfo("UTC"); now=datetime.now(myt); target=datetime.combine(now.date(),time(23,55,0,tzinfo=myt)); start=target if now<target else target+timedelta(days=1); buffer=now+timedelta(minutes=int("'"${BUFFER_MINUTES}"'")); start=(target+timedelta(days=1)) if start<=buffer else start; print(start.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ"))')
 
-          # Compute END UTC at 08:50 MYT the next calendar day after START
-          END=$(python3 -c "from datetime import datetime,date,time,timedelta;from zoneinfo import ZoneInfo;
-myt=ZoneInfo('Asia/Kuala_Lumpur');utc=ZoneInfo('UTC');
-now=datetime.now(myt);
-target=datetime.combine(now.date(),time(23,55,0,tzinfo=myt));
-start=target if now<target else target+timedelta(days=1);
-buffer=now+timedelta(minutes=int('${BUFFER_MINUTES}'));
-start= (target+timedelta(days=1)) if start<=buffer else start;
-end_myt=datetime.combine((start+timedelta(days=1)).date(),time(8,50,0,tzinfo=myt));
-print(end_myt.astimezone(utc).strftime('%Y-%m-%dT%H:%M:%SZ'))")
+          # END: 08:50 MYT the calendar day after START
+          END=$(python3 -c 'from datetime import datetime,date,time,timedelta;from zoneinfo import ZoneInfo; myt=ZoneInfo("Asia/Kuala_Lumpur"); utc=ZoneInfo("UTC"); now=datetime.now(myt); target=datetime.combine(now.date(),time(23,55,0,tzinfo=myt)); start=target if now<target else target+timedelta(days=1); buffer=now+timedelta(minutes=int("'"${BUFFER_MINUTES}"'")); start=(target+timedelta(days=1)) if start<=buffer else start; end_myt=datetime.combine((start+timedelta(days=1)).date(),time(8,50,0,tzinfo=myt)); print(end_myt.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ"))')
 
           echo "start=$START" >> "$GITHUB_OUTPUT"
           echo "end=$END"     >> "$GITHUB_OUTPUT"
