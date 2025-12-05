@@ -17,7 +17,7 @@ jobs:
       API_KEY: ${{ secrets.STATUSPAGE_API_KEY }}
 
       # Title & description
-      MAINTENANCE_NAME: "国内銀行振込２"
+      MAINTENANCE_NAME: "国内銀行振込3"
       MAINTENANCE_BODY: "お知らせ：国内銀行振込3は毎日 00:31〜07:59（GMT+8）に定期メンテナンスを実施します。"
 
       # Component for this maintenance (JPY Payment Solutions)
