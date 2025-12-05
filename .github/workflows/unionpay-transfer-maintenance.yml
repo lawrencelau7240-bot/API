@@ -1,4 +1,4 @@
-name: "Daily Maintenance — 银联转账 (23:30–08:00 MYT/GMT+8)"
+name: "Daily Maintenance — 银联转账 (23:30–08:00 GMT+8)"
 
 on:
   schedule:
@@ -15,7 +15,7 @@ jobs:
       PAGE_ID: ${{ secrets.STATUSPAGE_PAGE_ID }}
       API_KEY: ${{ secrets.STATUSPAGE_API_KEY }}
       MAINTENANCE_NAME: "银联转账"
-      MAINTENANCE_BODY: "提醒：银联转账将于每日 23:30–08:00（MYT/GMT+8）进行例行维护，届时服务可能受限。"
+      MAINTENANCE_BODY: "提醒：银联转账将于每日 23:30–08:00（GMT+8）进行例行维护，届时服务可能受限。"
       COMPONENT_CODE: "jb97qs2wnwkk"
 
     steps:
@@ -132,7 +132,7 @@ jobs:
           START: ${{ steps.times.outputs.start }}
           END:   ${{ steps.times.outputs.end }}
         run: |
-          echo "✅ 银联转账 scheduled (23:30–08:00 MYT/GMT+8)."
+          echo "✅ 银联转账 scheduled (23:30–08:00 GMT+8)."
           echo "Window (UTC): ${START} -> ${END}"
           echo "Component: ${COMPONENT_CODE}"
           echo "Posted now with an initial 'scheduled' update and notifications."
