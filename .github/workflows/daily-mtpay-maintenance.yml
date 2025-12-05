@@ -2,7 +2,7 @@ name: "Daily MTPay Maintenance (MYT 23:55 to 08:50)"
 
 on:
   schedule:
-    # Runs daily at 15:50 UTC (23:50 MYT) — 5 minutes before the 23:55 start
+    # Runs daily at 15:50 UTC (23:50 MYT)
     - cron: "50 15 * * *"
   workflow_dispatch:
 
@@ -16,70 +16,49 @@ concurrency:
 jobs:
   schedule-statuspage:
     runs-on: ubuntu-latest
+
     env:
       PAGE_ID: ${{ secrets.STATUSPAGE_PAGE_ID }}
       API_KEY: ${{ secrets.STATUSPAGE_API_KEY }}
+
+      # Title & description
       MAINTENANCE_NAME: "MTPay 每日维护"
       MAINTENANCE_BODY: "将于每日 23:55-08:50（GMT+8）进行例行维护"
+
+      # Component to mark under maintenance
       COMPONENT_CODE: "jb97qs2wnwkk"
 
+      # Safety buffer in minutes (used to ensure START is comfortably in the future)
+      BUFFER_MINUTES: "10"
+
     steps:
-      - name: Compute scheduled_for and scheduled_until (UTC)
+      - name: Compute scheduled_for and scheduled_until (UTC) with python -c
         id: times
         shell: bash
         run: |
           set -euo pipefail
 
-          START=$(python3 - <<'PY'
-from datetime import datetime, date, time, timedelta
-from zoneinfo import ZoneInfo
+          # Compute START UTC for the next future 23:55 MYT, with BUFFER_MINUTES
+          START=$(python3 -c "from datetime import datetime,date,time,timedelta;from zoneinfo import ZoneInfo;
+myt=ZoneInfo('Asia/Kuala_Lumpur');utc=ZoneInfo('UTC');
+now=datetime.now(myt);
+target=datetime.combine(now.date(),time(23,55,0,tzinfo=myt));
+start=target if now<target else target+timedelta(days=1);
+buffer=now+timedelta(minutes=int('${BUFFER_MINUTES}'));
+# if start is too close (<= buffer), push to the next day's target
+start= (target+timedelta(days=1)) if start<=buffer else start;
+print(start.astimezone(utc).strftime('%Y-%m-%dT%H:%M:%SZ'))")
 
-myt = ZoneInfo("Asia/Kuala_Lumpur")
-utc = ZoneInfo("UTC")
-
-now_myt = datetime.now(myt)
-today_start_myt = datetime.combine(now_myt.date(), time(23, 55, 0, tzinfo=myt))
-
-# Choose next future window
-if now_myt >= today_start_myt:
-    start_myt = today_start_myt + timedelta(days=1)
-else:
-    start_myt = today_start_myt
-
-# Safety buffer: at least 10 minutes ahead
-buffer = now_myt + timedelta(minutes=10)
-if start_myt <= buffer:
-    start_myt = today_start_myt + timedelta(days=1)
-
-start_utc = start_myt.astimezone(utc)
-print(start_utc.strftime("%Y-%m-%dT%H:%M:%SZ"))
-PY
-          )
-
-          END=$(python3 - <<'PY'
-from datetime import datetime, date, time, timedelta
-from zoneinfo import ZoneInfo
-
-myt = ZoneInfo("Asia/Kuala_Lumpur")
-utc = ZoneInfo("UTC")
-
-now_myt = datetime.now(myt)
-today_start_myt = datetime.combine(now_myt.date(), time(23, 55, 0, tzinfo=myt))
-
-if now_myt >= today_start_myt:
-    start_myt = today_start_myt + timedelta(days=1)
-else:
-    start_myt = today_start_myt
-
-buffer = now_myt + timedelta(minutes=10)
-if start_myt <= buffer:
-    start_myt = today_start_myt + timedelta(days=1)
-
-end_myt = datetime.combine((start_myt + timedelta(days=1)).date(), time(8, 50, 0, tzinfo=myt))
-end_utc = end_myt.astimezone(utc)
-print(end_utc.strftime("%Y-%m-%dT%H:%M:%SZ"))
-PY
-          )
+          # Compute END UTC at 08:50 MYT the next calendar day after START
+          END=$(python3 -c "from datetime import datetime,date,time,timedelta;from zoneinfo import ZoneInfo;
+myt=ZoneInfo('Asia/Kuala_Lumpur');utc=ZoneInfo('UTC');
+now=datetime.now(myt);
+target=datetime.combine(now.date(),time(23,55,0,tzinfo=myt));
+start=target if now<target else target+timedelta(days=1);
+buffer=now+timedelta(minutes=int('${BUFFER_MINUTES}'));
+start= (target+timedelta(days=1)) if start<=buffer else start;
+end_myt=datetime.combine((start+timedelta(days=1)).date(),time(8,50,0,tzinfo=myt));
+print(end_myt.astimezone(utc).strftime('%Y-%m-%dT%H:%M:%SZ'))")
 
           echo "start=$START" >> "$GITHUB_OUTPUT"
           echo "end=$END"     >> "$GITHUB_OUTPUT"
