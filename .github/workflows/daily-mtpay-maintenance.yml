@@ -6,27 +6,37 @@ on:
     - cron: "50 15 * * *"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+# Prevent multiple overlapping runs from racing to create duplicate maintenances
+concurrency:
+  group: mtpay-maintenance
+  cancel-in-progress: false
+
 jobs:
   schedule-statuspage:
     runs-on: ubuntu-latest
+
     env:
       PAGE_ID: ${{ secrets.STATUSPAGE_PAGE_ID }}
       API_KEY: ${{ secrets.STATUSPAGE_API_KEY }}
 
-      # Title & description
+      # Title & description (Chinese text is fine; Statuspage supports UTF-8)
       MAINTENANCE_NAME: "MTPay 每日维护"
-      MAINTENANCE_BODY: "将于每日23:55-08:50 (GMT+8) 进行例行维护"
+      MAINTENANCE_BODY: "将于每日 23:55-08:50（GMT+8）进行例行维护"
 
       # Component to mark under maintenance
       COMPONENT_CODE: "jb97qs2wnwkk"
 
     steps:
-      - name: Compute scheduled_for and scheduled_until (UTC) with Python
+      - name: Compute scheduled_for and scheduled_until (UTC)
         id: times
         shell: bash
         run: |
           set -euo pipefail
 
+          # Compute START: the next future 23:55 MYT, with a 10-minute safety buffer
           START=$(python3 - <<'PY'
 from datetime import datetime, date, time, timedelta
 from zoneinfo import ZoneInfo
@@ -35,23 +45,28 @@ myt = ZoneInfo("Asia/Kuala_Lumpur")
 utc = ZoneInfo("UTC")
 
 now_myt = datetime.now(myt)
+
+# Target daily start: 23:55 MYT
 today_start_myt = datetime.combine(now_myt.date(), time(23, 55, 0, tzinfo=myt))
 
+# Choose the next future window
 if now_myt >= today_start_myt:
     start_myt = today_start_myt + timedelta(days=1)
 else:
     start_myt = today_start_myt
 
-# Optional buffer (uncomment if needed):
-# buffer = now_myt + timedelta(minutes=5)
-# if start_myt <= buffer:
-#     start_myt = start_myt + timedelta(days=1)
+# Safety buffer: ensure start is at least 10 minutes ahead of current time
+buffer = now_myt + timedelta(minutes=10)
+if start_myt <= buffer:
+    # If we're too close, schedule the next day's window to avoid API rejection
+    start_myt = today_start_myt + timedelta(days=1)
 
 start_utc = start_myt.astimezone(utc)
 print(start_utc.strftime("%Y-%m-%dT%H:%M:%SZ"))
 PY
           )
 
+          # Compute END: 08:50 MYT on the calendar day after START
           END=$(python3 - <<'PY'
 from datetime import datetime, date, time, timedelta
 from zoneinfo import ZoneInfo
@@ -59,6 +74,7 @@ from zoneinfo import ZoneInfo
 myt = ZoneInfo("Asia/Kuala_Lumpur")
 utc = ZoneInfo("UTC")
 
+# Mirror the START logic to derive the matching END
 now_myt = datetime.now(myt)
 today_start_myt = datetime.combine(now_myt.date(), time(23, 55, 0, tzinfo=myt))
 
@@ -67,6 +83,12 @@ if now_myt >= today_start_myt:
 else:
     start_myt = today_start_myt
 
+# Safety buffer (matching START logic)
+buffer = now_myt + timedelta(minutes=10)
+if start_myt <= buffer:
+    start_myt = today_start_myt + timedelta(days=1)
+
+# End at 08:50 MYT the next calendar day after start
 end_myt = datetime.combine((start_myt + timedelta(days=1)).date(), time(8, 50, 0, tzinfo=myt))
 end_utc = end_myt.astimezone(utc)
 print(end_utc.strftime("%Y-%m-%dT%H:%M:%SZ"))
@@ -87,7 +109,7 @@ PY
           END:   ${{ steps.times.outputs.end }}
         run: |
           set -euo pipefail
-          echo "Scheduling ${START} -> ${END} (UTC) for component ${COMPONENT_CODE}"
+          echo "Creating maintenance ${START} -> ${END} (UTC) for component ${COMPONENT_CODE}"
 
           HTTP_CODE=$(curl -sS -o response.json -w "%{http_code}" \
             "https://api.statuspage.io/v1/pages/${PAGE_ID}/incidents" \
@@ -121,3 +143,4 @@ PY
           echo "Scheduled maintenance created."
           echo "Title: ${MAINTENANCE_NAME}"
           echo "Window (UTC): ${START} -> ${END}"
+          echo "Local (MYT):  23:55 -> 08:50 (next day)"
