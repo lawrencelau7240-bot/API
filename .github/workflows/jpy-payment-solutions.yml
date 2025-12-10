@@ -1,10 +1,10 @@
-name: "Daily Maintenance — 国内銀行振込２ (20:00–00:30 MYT)"
+name: "Daily Maintenance — 国内銀行振込２ (00:30–08:00 MYT)"
 
 on:
   schedule:
-    # Post 5 minutes before 20:00 MYT start.
-    # 20:00 MYT = 12:00 UTC (same day), so we post at 11:55 UTC (previous day) daily.
-    - cron: "55 11 * * *"
+    # Post 5 minutes before 00:30 MYT start.
+    # 00:30 MYT = 16:30 UTC (previous day), so we post at 16:25 UTC (previous day) daily.
+    - cron: "25 16 * * *"
   workflow_dispatch:
 
 jobs:
@@ -18,23 +18,23 @@ jobs:
 
       # Title & description
       MAINTENANCE_NAME: "国内銀行振込２"
-      MAINTENANCE_BODY: "お知らせ：国内銀行振込２は毎日 20:00〜00:30（GMT+8）に定期メンテナンスを実施します。"
+      MAINTENANCE_BODY: "お知らせ：国内銀行振込２は毎日 00:30〜08:00（GMT+8）に定期メンテナンスを実施します。"
 
       # Component for this maintenance (JPY Payment Solutions)
       COMPONENT_CODE: "m3dgpl8w4djd"
 
     steps:
-      - name: Compute scheduled_for and scheduled_until (UTC) — next 20:00→00:30 MYT
+      - name: Compute scheduled_for and scheduled_until (UTC) — next 00:30→08:00 MYT
         id: times
         shell: bash
         run: |
           set -euo pipefail
 
-          # Compute START (next 20:00 MYT) in UTC ISO 8601
-          START=$(python3 -c 'from datetime import datetime, time, timedelta; from zoneinfo import ZoneInfo; myt=ZoneInfo("Asia/Kuala_Lumpur"); utc=ZoneInfo("UTC"); now=datetime.now(myt); today_start=datetime.combine(now.date(), time(20,0), tzinfo=myt); start_local=today_start if now < today_start else today_start + timedelta(days=1); print(start_local.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ"))')
+          # Compute START (next 00:30 MYT) in UTC ISO 8601
+          START=$(python3 -c 'from datetime import datetime, time, timedelta; from zoneinfo import ZoneInfo; myt=ZoneInfo("Asia/Kuala_Lumpur"); utc=ZoneInfo("UTC"); now=datetime.now(myt); today_start=datetime.combine(now.date(), time(0,30), tzinfo=myt); start_local=today_start if now < today_start else today_start + timedelta(days=1); print(start_local.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ"))')
 
-          # Compute END (START + 4.5 hours) in UTC ISO 8601 (12:30 AM next day MYT)
-          END=$(python3 -c 'from datetime import datetime, time, timedelta; from zoneinfo import ZoneInfo; myt=ZoneInfo("Asia/Kuala_Lumpur"); utc=ZoneInfo("UTC"); now=datetime.now(myt); today_start=datetime.combine(now.date(), time(20,0), tzinfo=myt); start_local=today_start if now < today_start else today_start + timedelta(days=1); end_local=start_local + timedelta(hours=4, minutes=30); print(end_local.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ"))')
+          # Compute END (START + 7.5 hours) in UTC ISO 8601 (08:00 AM next day MYT)
+          END=$(python3 -c 'from datetime import datetime, time, timedelta; from zoneinfo import ZoneInfo; myt=ZoneInfo("Asia/Kuala_Lumpur"); utc=ZoneInfo("UTC"); now=datetime.now(myt); today_start=datetime.combine(now.date(), time(0,30), tzinfo=myt); start_local=today_start if now < today_start else today_start + timedelta(days=1); end_local=start_local + timedelta(hours=7, minutes=30); print(end_local.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ"))')
 
           echo "start=$START" >> "$GITHUB_OUTPUT"
           echo "end=$END"     >> "$GITHUB_OUTPUT"
@@ -108,6 +108,6 @@ jobs:
           START: ${{ steps.times.outputs.start }}
           END:   ${{ steps.times.outputs.end }}
         run: |
-          echo "✅ 国内銀行振込２ scheduled (20:00–00:30 MYT)."
+          echo "✅ 国内銀行振込２ scheduled (00:30–08:00 MYT)."
           echo "Window (UTC): ${START} -> ${END}"
           echo "Component: ${COMPONENT_CODE} (JPY Payment Solutions)"
