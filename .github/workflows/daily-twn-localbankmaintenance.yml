@@ -1,4 +1,4 @@
-name: "Daily Maintenance — 台湾本地銀行轉賠 (20:00–09:00 MYT)"
+name: "Daily Maintenance — 台湾本地銀行轉賬 (20:00–09:00 MYT)"
 
 on:
   schedule:
@@ -17,8 +17,8 @@ jobs:
       API_KEY: ${{ secrets.STATUSPAGE_API_KEY }}
 
       # Title & description
-      MAINTENANCE_NAME: "台湾本地銀行轉賠"
-      MAINTENANCE_BODY: "お知らせ：台湾本地銀行轉賠は毎日 20:00〜09:00（GMT+8）に定期メンテナンスを実施します。"
+      MAINTENANCE_NAME: "台湾本地銀行轉賬"
+      MAINTENANCE_BODY: "通知：台灣銀行轉帳服務將於每日20:00至隔日09:00（GMT+8）進行定期維護。"
 
       # Component for this maintenance (Local Taiwan Bank Transfer)
       COMPONENT_CODE: "j4p07yl30yyb"
@@ -98,7 +98,7 @@ jobs:
           cat response.json || true
 
           if [ "$HTTP_CODE" -ge 300 ]; then
-            echo "::error ::Failed to create 台湾本地銀行轉賠 maintenance. See response above."
+            echo "::error ::Failed to create 台湾本地銀行轉帳 maintenance. See response above."
             exit 1
           fi
 
@@ -108,6 +108,6 @@ jobs:
           START: ${{ steps.times.outputs.start }}
           END:   ${{ steps.times.outputs.end }}
         run: |
-          echo "✅ 台湾本地銀行轉賠 scheduled (20:00–09:00 MYT)."
+          echo "✅ 台湾本地銀行轉帳 scheduled (20:00–09:00 MYT)."
           echo "Window (UTC): ${START} -> ${END}"
           echo "Component: ${COMPONENT_CODE} (Local Taiwan Bank Transfer)"
