@@ -1,10 +1,10 @@
-name: "Daily Maintenance — 台湾本地銀行轉賠 (09:00–20:00 MYT)"
+name: "Daily Maintenance — 台湾本地銀行轉賠 (20:00–09:00 MYT)"
 
 on:
   schedule:
-    # Post 5 minutes before 09:00 MYT start.
-    # 09:00 MYT = 01:00 UTC (same day), so we post at 00:55 UTC (previous day) daily.
-    - cron: "55 00 * * *"
+    # Post 5 minutes before 20:00 MYT start.
+    # 20:00 MYT = 12:00 UTC (same day), so we post at 11:55 UTC (previous day) daily.
+    - cron: "55 11 * * *"
   workflow_dispatch:
 
 jobs:
@@ -18,23 +18,23 @@ jobs:
 
       # Title & description
       MAINTENANCE_NAME: "台湾本地銀行轉賠"
-      MAINTENANCE_BODY: "お知らせ：台湾本地銀行轉賠は毎日 09:00〜20:00（GMT+8）に定期メンテナンスを実施します。"
+      MAINTENANCE_BODY: "お知らせ：台湾本地銀行轉賠は毎日 20:00〜09:00（GMT+8）に定期メンテナンスを実施します。"
 
       # Component for this maintenance (Local Taiwan Bank Transfer)
       COMPONENT_CODE: "j4p07yl30yyb"
 
     steps:
-      - name: Compute scheduled_for and scheduled_until (UTC) — next 09:00→20:00 MYT
+      - name: Compute scheduled_for and scheduled_until (UTC) — next 20:00→09:00 MYT
         id: times
         shell: bash
         run: |
           set -euo pipefail
 
-          # Compute START (next 09:00 MYT) in UTC ISO 8601
-          START=$(python3 -c 'from datetime import datetime, time, timedelta; from zoneinfo import ZoneInfo; myt=ZoneInfo("Asia/Taipei"); utc=ZoneInfo("UTC"); now=datetime.now(myt); today_start=datetime.combine(now.date(), time(9,0), tzinfo=myt); start_local=today_start if now < today_start else today_start + timedelta(days=1); print(start_local.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ"))')
+          # Compute START (next 20:00 MYT) in UTC ISO 8601
+          START=$(python3 -c 'from datetime import datetime, time, timedelta; from zoneinfo import ZoneInfo; myt=ZoneInfo("Asia/Taipei"); utc=ZoneInfo("UTC"); now=datetime.now(myt); today_start=datetime.combine(now.date(), time(20,0), tzinfo=myt); start_local=today_start if now < today_start else today_start + timedelta(days=1); print(start_local.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ"))')
 
           # Compute END (START + 11h) in UTC ISO 8601
-          END=$(python3 -c 'from datetime import datetime, time, timedelta; from zoneinfo import ZoneInfo; myt=ZoneInfo("Asia/Taipei"); utc=ZoneInfo("UTC"); now=datetime.now(myt); today_start=datetime.combine(now.date(), time(9,0), tzinfo=myt); start_local=today_start if now < today_start else today_start + timedelta(days=1); end_local=start_local + timedelta(hours=11); print(end_local.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ"))')
+          END=$(python3 -c 'from datetime import datetime, time, timedelta; from zoneinfo import ZoneInfo; myt=ZoneInfo("Asia/Taipei"); utc=ZoneInfo("UTC"); now=datetime.now(myt); today_start=datetime.combine(now.date(), time(20,0), tzinfo=myt); start_local=today_start if now < today_start else today_start + timedelta(days=1); end_local=start_local + timedelta(hours=11); print(end_local.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%SZ"))')
 
           echo "start=$START" >> "$GITHUB_OUTPUT"
           echo "end=$END"     >> "$GITHUB_OUTPUT"
@@ -108,6 +108,6 @@ jobs:
           START: ${{ steps.times.outputs.start }}
           END:   ${{ steps.times.outputs.end }}
         run: |
-          echo "✅ 台湾本地銀行轉賠 scheduled (09:00–20:00 MYT)."
+          echo "✅ 台湾本地銀行轉賠 scheduled (20:00–09:00 MYT)."
           echo "Window (UTC): ${START} -> ${END}"
           echo "Component: ${COMPONENT_CODE} (Local Taiwan Bank Transfer)"
